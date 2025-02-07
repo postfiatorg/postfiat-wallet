@@ -1,0 +1,14 @@
+[project]
+name = "pft-wallet"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "boto3",
+    "dynaconf",
+    "websockets",
+    "web3"
+]
+
+[project.scripts]
+pft-wallet = "pft_wallet.cli:main"
