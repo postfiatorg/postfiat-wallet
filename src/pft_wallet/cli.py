@@ -11,6 +11,7 @@ from .server.app import create_app
 from .utils.browser import launch_browser
 from .utils.updater import UIUpdater
 from .config import settings
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def check_package_updates():
 
 def ensure_data_dir():
     """Ensure data directory exists"""
-    data_dir = Path(settings.paths.data_dir)
+    data_dir = Path(settings.PATHS["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
@@ -45,35 +46,23 @@ def cli(debug):
 @click.option('--port', default=None, help='Port to run server on')
 @click.option('--no-browser', is_flag=True, help='Don\'t open browser window')
 @click.option('--no-updates', is_flag=True, help='Skip update checks')
-def start(port, no_browser, no_updates):
+@click.option('--dev', is_flag=True, help='Run in development mode')
+def start(port, no_browser, no_updates, dev):
     """Start the PFT Wallet interface"""
-    # Ensure data directory exists
-    data_dir = ensure_data_dir()
-    click.echo(f"Using data directory: {data_dir}")
-
-    # Check for updates unless disabled
-    if not no_updates:
-        # Check package updates
-        package_updated = check_package_updates()
+    if dev:
+        os.environ["PFT_DEV"] = "1"
+        click.echo("Running in development mode")
+        click.echo("Start the Next.js dev server with: cd src/pft_wallet/ui && npm run dev")
         
-        # Check UI updates
-        ui_updater = UIUpdater()
-        if ui_updater.check_for_updates():
-            click.echo("Downloading UI updates...")
-            if ui_updater.download_update():
-                click.echo("UI updated successfully")
-            else:
-                click.echo("Failed to update UI, using packaged version")
-
     # Use configured port if none specified
     if port is None:
-        port = settings.server.port
+        port = settings.SERVER["port"]
 
     # Create and configure FastAPI app
     app = create_app()
     
     # Launch browser unless disabled
-    if not no_browser:
+    if not no_browser and not dev:
         launch_browser(f"http://localhost:{port}")
     
     # Start server
@@ -107,7 +96,7 @@ def reset(force):
         if not click.confirm('This will delete all local wallet data. Continue?'):
             return
     
-    data_dir = Path(settings.paths.data_dir)
+    data_dir = Path(settings.PATHS["data_dir"])
     if data_dir.exists():
         import shutil
         shutil.rmtree(data_dir)

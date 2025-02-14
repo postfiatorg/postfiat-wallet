@@ -10,7 +10,7 @@ class UIUpdater:
     def __init__(self):
         self.s3 = boto3.client('s3')
         self.static_dir = Path(pkg_resources.resource_filename('pft_wallet', 'static'))
-        self.temp_dir = Path(settings.paths.cache_dir) / 'ui_updates'
+        self.temp_dir = Path(settings.PATHS["cache_dir"]) / 'ui_updates'
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
     def check_for_updates(self):
@@ -24,8 +24,8 @@ class UIUpdater:
 
             # Get latest version from S3
             response = self.s3.get_object(
-                Bucket=settings.s3.bucket,
-                Key=f"{settings.s3.ui_prefix}/version.json"
+                Bucket=settings.S3["bucket"],
+                Key=f"{settings.S3['ui_prefix']}/version.json"
             )
             latest_version = json.loads(response['Body'].read())['version']
 
@@ -43,11 +43,11 @@ class UIUpdater:
 
             # Download all UI files
             paginator = self.s3.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=settings.s3.bucket, Prefix=settings.s3.ui_prefix):
+            for page in paginator.paginate(Bucket=settings.S3["bucket"], Prefix=settings.S3["ui_prefix"]):
                 for obj in page.get('Contents', []):
-                    local_path = self.temp_dir / Path(obj['Key']).relative_to(settings.s3.ui_prefix)
+                    local_path = self.temp_dir / Path(obj['Key']).relative_to(settings.S3["ui_prefix"])
                     local_path.parent.mkdir(parents=True, exist_ok=True)
-                    self.s3.download_file(settings.s3.bucket, obj['Key'], str(local_path))
+                    self.s3.download_file(settings.S3["bucket"], obj['Key'], str(local_path))
 
             # Validate downloaded files (e.g., check index.html exists)
             if not (self.temp_dir / 'index.html').exists():

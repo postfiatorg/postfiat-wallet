@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pft-wallet"
 version = "0.1.0"
@@ -7,8 +11,16 @@ dependencies = [
     "boto3",
     "dynaconf",
     "websockets",
-    "web3"
+    "web3",
+    "click"
 ]
+
+[tool.setuptools.package-data]
+pft_wallet = ["static/**/*"]
 
 [project.scripts]
 pft-wallet = "pft_wallet.cli:main"
+
+[tool.setuptools]
+packages = ["pft_wallet"]
+package-dir = {"" = "src"}
