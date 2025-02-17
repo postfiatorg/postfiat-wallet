@@ -9,10 +9,12 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
   const [address, setAddress] = useState('');
   const [showSecret, setShowSecret] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     if (mode === 'signup' && password !== confirmPassword) {
       setError('Passwords do not match');
@@ -56,6 +58,24 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
       const data = await response.json();
       console.log("Auth data:", data);
       
+      // Initialize tasks after successful authentication
+      try {
+        const initResponse = await fetch(`http://localhost:8000/api/tasks/initialize/${data.address}`, {
+          method: 'POST'
+        });
+        console.log('Response status:', initResponse.status);
+        console.log('Response headers:', Object.fromEntries(initResponse.headers));
+        
+        if (!initResponse.ok) {
+          const errorText = await initResponse.text();
+          console.error('Error response:', errorText);
+          throw new Error(`Failed to initialize tasks: ${errorText}`);
+        }
+      } catch (err) {
+        console.error('Fetch error:', err);
+        throw err;
+      }
+      
       if (mode === 'generate') {
         // Clear form and switch to signin mode after successful account creation
         setUsername('');
@@ -71,6 +91,8 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
     } catch (err) {
       console.error("Error in handleSubmit:", err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -116,7 +138,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
               <input
                 type="text"
                 value={address}
-                readOnly
+                onChange={(e) => setAddress(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
               />
             </div>
@@ -137,7 +159,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
               <input
                 type={showSecret ? "text" : "password"}
                 value={privateKey}
-                readOnly
+                onChange={(e) => setPrivateKey(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
               />
             </div>
@@ -199,7 +221,6 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
               <button
                 type="submit"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
-                disabled={!privateKey}
               >
                 Create Account
               </button>

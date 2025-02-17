@@ -1,16 +1,19 @@
 from typing import List, Dict, Any
-from xrpl.clients import JsonRpcClient
-from xrpl.models import AccountTx, AccountLines
+from xrpl.asyncio.clients import AsyncJsonRpcClient
+from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
 from xrpl.core.keypairs import derive_classic_address
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BlockchainService:
-    def __init__(self, node_url: str = "https://s.altnet.rippletest.net:51234"):
-        """Initialize blockchain service with XRPL client"""
-        self.client = JsonRpcClient(node_url)
+    def __init__(self, node_url: str = "https://s2.ripple.com:51234"):
+        """Initialize blockchain service with XRPL async client"""
+        self.client = AsyncJsonRpcClient(node_url)
         self.pft_currency = "PFT"
-        self.pft_issuer = "YOUR_PFT_ISSUER_ADDRESS"  # Replace with actual PFT issuer address
+        self.pft_issuer = "rnQUEEg8yyjrwk9FhyXpKavHyCRJM9BDMW"  # Replace with actual PFT issuer address
 
     def create_wallet_from_secret(self, secret: str) -> dict:
         """Create a wallet from a secret key"""
@@ -33,12 +36,11 @@ class BlockchainService:
 
     async def get_xrp_balance(self, account: str) -> float:
         """Get XRP balance for the given account"""
-        response = await self.client.request({
-            "command": "account_info",
-            "account": account,
-            "ledger_index": "validated"
-        })
-        
+        request = AccountInfo(
+            account=account,
+            ledger_index="validated"
+        )
+        response = await self.client.request(request)
         balance_drops = response.result["account_data"]["Balance"]
         return drops_to_xrp(balance_drops)
 
@@ -81,13 +83,20 @@ class BlockchainService:
         return transactions
 
     async def get_account_summary(self, account: str) -> Dict[str, Any]:
-        """Get a summary of account information including balances and recent transactions"""
-        xrp_balance = await self.get_xrp_balance(account)
-        pft_balance = await self.get_pft_balance(account)
-        transactions = await self.get_transaction_history(account)
+        """Get a summary of account information including XRP and PFT balances"""
+        try:
+            logger.info(f"Fetching summary for account: {account}")
+            xrp_balance = await self.get_xrp_balance(account)
+            logger.info(f"XRP balance: {xrp_balance}")
+            pft_balance = await self.get_pft_balance(account)
+            logger.info(f"PFT balance: {pft_balance}")
 
-        return {
-            "xrp_balance": xrp_balance,
-            "pft_balance": pft_balance,
-            "recent_transactions": transactions
-        }
+            summary = {
+                "xrp_balance": xrp_balance,
+                "pft_balance": pft_balance
+            }
+            logger.info(f"Returning summary: {summary}")
+            return summary
+        except Exception as e:
+            logger.error(f"Error in get_account_summary: {str(e)}")
+            raise

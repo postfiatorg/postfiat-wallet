@@ -9,6 +9,7 @@ import PaymentsPage from '@/components/PaymentsPage';
 import AuthPage from '@/components/AuthPage';
 import Navbar from '@/components/navbar';
 import { AuthState } from '@/types/auth';
+import { AuthProvider } from '@/context/AuthContext';
 
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
@@ -80,16 +81,18 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <Navbar 
-        username={auth.username} 
-        onSignOut={handleSignOut}
-        activePage={activePage}
-        onPageChange={handlePageChange}
-      />
-      <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-        {renderPage()}
-      </main>
-    </div>
+    <AuthProvider value={auth}>
+      <div className="min-h-screen bg-slate-950">
+        <Navbar 
+          username={auth.username} 
+          onSignOut={handleSignOut}
+          activePage={activePage}
+          onPageChange={handlePageChange}
+        />
+        <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+          {renderPage()}
+        </main>
+      </div>
+    </AuthProvider>
   );
 }

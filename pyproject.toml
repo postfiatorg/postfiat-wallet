@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pft-wallet"
 version = "0.1.0"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "uvicorn",
@@ -12,7 +13,14 @@ dependencies = [
     "dynaconf",
     "websockets",
     "web3",
-    "click"
+    "click",
+    "setuptools",
+    # Task Node dependencies
+    "tasknode-core",
+    "tasknode-sdk",
+    # XRPL dependencies
+    "xrpl-py",
+    "cryptography"
 ]
 
 [tool.setuptools.package-data]
@@ -24,3 +32,12 @@ pft-wallet = "pft_wallet.cli:main"
 [tool.setuptools]
 packages = ["pft_wallet"]
 package-dir = {"" = "src"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "isort",
+    "mypy"
+]

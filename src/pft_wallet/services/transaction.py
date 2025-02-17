@@ -1,5 +1,6 @@
 import requests
 import logging
+from .task_storage import TaskStorage, TaskState
 
 class Transaction:
     """
@@ -7,6 +8,7 @@ class Transaction:
     """
     def __init__(self):
         self.base_url = "http://localhost:5001/api/v1"
+        self.task_storage = TaskStorage()
 
     def create_initiation_rite_transaction(self, transaction_data: dict) -> dict:
         """
@@ -75,6 +77,13 @@ class Transaction:
         Raises:
             Exception: If the request fails or returns an error status
         """
+        # Create task record before making transaction
+        self.task_storage.create_task(
+            task_id=transaction_data["task_id"],
+            wallet_address=transaction_data["account"],
+            request=transaction_data["request"]
+        )
+        
         url = f"{self.base_url}/user/task-request-tx"
         
         logging.debug(f"Sending task request to: {url}")
@@ -86,12 +95,23 @@ class Transaction:
             
             data = response.json()
             if data.get("status") != "success":
+                # Update task state to failed if transaction fails
+                self.task_storage.update_task_state(
+                    transaction_data["task_id"], 
+                    TaskState.FAILED,
+                    f"Transaction failed: {data.get('error', 'Unknown error')}"
+                )
                 raise Exception(f"Error from transaction service: {data.get('error', 'Unknown error')}")
                 
             return data["transaction"]
             
         except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to create task request transaction: {str(e)}")
+            # Update task state to failed if request fails
+            self.task_storage.update_task_state(
+                transaction_data["task_id"], 
+                TaskState.FAILED,
+                f"Request failed: {str(e)}"
+            )
             raise Exception(f"Failed to create task request transaction: {str(e)}")
 
 
