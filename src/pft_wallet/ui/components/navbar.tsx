@@ -2,7 +2,7 @@ import React from 'react';
 
 interface NavbarProps {
   username: string | null;
-  onSignOut: () => void;
+  onSignOut: () => Promise<void>;
   activePage: string;
   onPageChange: (page: string) => void;
 }

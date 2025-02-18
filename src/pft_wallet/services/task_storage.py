@@ -77,7 +77,6 @@ class TaskStorage:
         """
         logger.info(f"Initializing state for {wallet_address}")
 
-        # We begin at EARLIEST_LEDGER_SEQ.ledger_seq.  -1 means "latest"
         start_ledger = EARLIEST_LEDGER_SEQ.ledger_seq
         end_ledger = -1
 
@@ -85,22 +84,20 @@ class TaskStorage:
         message_count = 0
 
         try:
-            # Fetch and decode all messages from earliest to latest
-            task_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
-            remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            # Fetch transactions only once
+            txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
             
             logger.info(f"Starting to fetch messages for {wallet_address} from ledger {start_ledger}")
             
-            async for msg in combine_streams(
-                decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
-                decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
-            ):
+            # Decode the transactions using both decoders
+            task_stream = decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS)
+            
+            async for msg in task_stream:
                 logger.debug(f"Processing message: {msg}")
                 self._state.update(msg)
                 newest_ledger_seen = msg.ledger_seq
                 message_count += 1
                 
-                # Log state after each update
                 if self._state.node_account:
                     logger.debug(f"Current task count: {len(self._state.node_account.tasks)}")
 
@@ -152,13 +149,24 @@ class TaskStorage:
                         start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ.ledger_seq)
 
                     # We'll fetch from the last processed + 1 up to 'latest' (-1)
-                    async for msg in self.client.get_account_msgs(
-                        account=wallet_address,
-                        start_ledger=start_ledger + 1,
-                        end_ledger=-1
+                    task_txn_stream = self.client.get_account_txns(
+                        wallet_address, 
+                        start_ledger + 1, 
+                        -1
+                    )
+                    remembrancer_txn_stream = self.client.get_account_txns(
+                        wallet_address, 
+                        start_ledger + 1, 
+                        -1
+                    )
+
+                    async for msg in combine_streams(
+                        decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
+                        decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
                     ):
                         self._state.update(msg)
                         self._last_processed_ledger[wallet_address] = msg.ledger_seq
+                        logger.debug(f"Updated state with message from ledger {msg.ledger_seq}")
 
                     # Sleep 30s between polls
                     await asyncio.sleep(30)
@@ -287,3 +295,22 @@ class TaskStorage:
             sections[t["status"]].append(t)
 
         return sections
+
+    def clear_user_state(self, wallet_address: str) -> None:
+        """
+        Clear all state related to a specific wallet address when they log out.
+        """
+        logger.info(f"Clearing state for {wallet_address}")
+        
+        # Stop any running refresh loop
+        self.stop_refresh_loop(wallet_address)
+        
+        # Clear the last processed ledger
+        if wallet_address in self._last_processed_ledger:
+            del self._last_processed_ledger[wallet_address]
+        
+        # Clear the user's tasks from state
+        if self._state.node_account:
+            self._state = UserState()  # Create fresh state
+        
+        logger.info(f"State cleared for {wallet_address}")

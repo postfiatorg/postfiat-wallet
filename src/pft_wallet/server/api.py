@@ -240,6 +240,16 @@ async def get_account_summary(account: str):
         logger.error(f"Error getting account summary for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/tasks/clear-state/{account}")
+async def clear_task_state(account: str):
+    """Clear all task state for an account when they log out."""
+    try:
+        task_storage.clear_user_state(account)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error clearing state for {account}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Mount the router under /api
 logger.info("Registering API routes...")
 app.include_router(router, prefix="/api")
