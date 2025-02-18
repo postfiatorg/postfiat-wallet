@@ -7,7 +7,7 @@ from pft_wallet.services import storage
 import logging
 from pft_wallet.services.task_storage import TaskStorage
 from enum import Enum
-from tasknode.state.state_event_sourcer import TaskStatus
+from tasknode.state import TaskStatus
 from typing import Optional
 
 app = FastAPI()
