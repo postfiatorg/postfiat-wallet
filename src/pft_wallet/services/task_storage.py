@@ -1,3 +1,11 @@
+import os
+from xrpl.wallet import Wallet
+
+# Set a random seed for development before importing tasknode
+dev_wallet = Wallet.create()
+os.environ['TASK_NODE_SEED'] = dev_wallet.seed
+
+# Now we can import tasknode modules that depend on TASK_NODE_SEED
 from typing import List, Dict, Any, Optional
 from tasknode.rpc import CachingRpcClient
 from tasknode.messages import Message
@@ -64,11 +72,7 @@ class TaskStorage:
     async def initialize_user_tasks(self, wallet_address: str) -> None:
         """
         Fetches all existing transactions/messages for the user from the earliest ledger
-        to the latest, updating the state. This is typically called when a user
-        "signs in" or appears in the UI for the first time.
-        
-        The result is that the user has an in-memory state in `self._state`
-        containing tasks, handshake info, and so on.
+        to the latest, updating the state.
         """
         logger.info(f"Initializing state for {wallet_address}")
 
@@ -77,24 +81,47 @@ class TaskStorage:
         end_ledger = -1
 
         newest_ledger_seen = None
+        message_count = 0
 
-        # Fetch and decode all messages from earliest to latest
-        task_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
-        remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
-        
-        async for msg in combine_streams(
-            decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
-            decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
-        ):
-            self._state.update(msg)
-            newest_ledger_seen = msg.ledger_seq
+        try:
+            # Fetch and decode all messages from earliest to latest
+            task_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            
+            logger.info(f"Starting to fetch messages for {wallet_address} from ledger {start_ledger}")
+            
+            async for msg in combine_streams(
+                decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
+                decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
+            ):
+                logger.debug(f"Processing message: {msg}")
+                self._state.update(msg)
+                newest_ledger_seen = msg.ledger_seq
+                message_count += 1
+                
+                # Log state after each update
+                if self._state.node_account:
+                    logger.debug(f"Current task count: {len(self._state.node_account.tasks)}")
 
-        # Store the last processed ledger
-        if newest_ledger_seen is not None:
-            self._last_processed_ledger[wallet_address] = newest_ledger_seen
-        else:
-            # If no messages found, at least set them to the earliest ledger
-            self._last_processed_ledger[wallet_address] = start_ledger
+            # Store the last processed ledger
+            if newest_ledger_seen is not None:
+                self._last_processed_ledger[wallet_address] = newest_ledger_seen
+                logger.info(f"Processed {message_count} messages, newest ledger: {newest_ledger_seen}")
+            else:
+                # If no messages found, at least set them to the earliest ledger
+                self._last_processed_ledger[wallet_address] = start_ledger
+                logger.info("No messages found during initialization")
+
+            # Log final state
+            if self._state.node_account:
+                logger.info(f"Final task count: {len(self._state.node_account.tasks)}")
+                logger.info(f"Task IDs: {list(self._state.node_account.tasks.keys())}")
+            else:
+                logger.warning("No node_account in state after initialization")
+
+        except Exception as e:
+            logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+            raise
 
         logger.info(f"Initialization complete for {wallet_address}. Last processed ledger: "
                     f"{self._last_processed_ledger[wallet_address]}")
@@ -204,16 +231,29 @@ class TaskStorage:
         Return tasks from in-memory state for the specified wallet, optionally filtered
         by TaskStatus.
         """
+        logger.info(f"Getting tasks by state for {wallet_address} (status filter: {status})")
+        
+        # Ensure we have initialized state
+        if not self._state.node_account or wallet_address not in self._last_processed_ledger:
+            logger.info(f"State not initialized for {wallet_address}, initializing now")
+            await self.initialize_user_tasks(wallet_address)
+        
         # Grab the user's in-memory AccountState
         account_state = self._state.node_account
-        if not account_state:
-            logger.warning(f"No AccountState found for {wallet_address}")
+        if not account_state: 
+            logger.warning(f"No AccountState found for {wallet_address} after initialization")
             return []
 
+        # Log the available tasks
+        logger.info(f"Found {len(account_state.tasks)} tasks in account state")
+        if account_state.tasks:
+            logger.info(f"Task IDs: {list(account_state.tasks.keys())}")
+        
         # Filter tasks if a status is specified
         tasks = []
         for task_id, tstate in account_state.tasks.items():
             if status is None or tstate.status == status:
+                logger.debug(f"Including task {task_id} with status {tstate.status}")
                 tasks.append({
                     "id": task_id,
                     "status": tstate.status.name.lower(),
@@ -223,9 +263,10 @@ class TaskStorage:
                         {"direction": direction.name.lower(), "data": data}
                         for direction, data in tstate.message_history
                     ],
-                    "timestamp": None,  # If needed, you could store or derive from messages
+                    "timestamp": None,
                 })
 
+        logger.info(f"Returning {len(tasks)} tasks after filtering")
         return tasks
 
     async def get_tasks_by_ui_section(self, wallet_address: str) -> Dict[str, List[dict]]:

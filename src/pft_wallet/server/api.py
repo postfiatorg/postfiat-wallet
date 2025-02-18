@@ -186,21 +186,28 @@ async def stop_task_refresh(account: str):
 @router.get("/tasks/{account}")
 async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
     """
-    Get tasks for the given account. If a status is provided, return
-    only tasks matching that status. Otherwise, return tasks organized
-    by status in a dictionary keyed by status name.
+    Get all tasks for an account, optionally filtered by status.
     """
-    logger.info(f"Fetching tasks for account: {account}, status filter: {status}")
+    logger.info(f"Received tasks request for account: {account}, status filter: {status}")
     try:
+        # First ensure tasks are initialized
+        if not task_storage._state.node_account:
+            logger.info(f"Account {account} not initialized, initializing now...")
+            await task_storage.initialize_user_tasks(account)
+        
+        # Convert API enum to internal enum if status is provided
+        internal_status = TaskStatus[status.name] if status else None
+        
         if status:
-            # Convert the TaskStatusAPI to the actual TaskStatus enum
-            task_status = TaskStatus[status.name]
-            tasks = await task_storage.get_tasks_by_state(account, task_status)
-            return {status.value: tasks}
-        else:
-            # Get tasks organized by UI section
-            tasks = await task_storage.get_tasks_by_ui_section(account)
+            logger.info(f"Fetching tasks with status {status}")
+            tasks = await task_storage.get_tasks_by_state(account, internal_status)
             return tasks
+        else:
+            logger.info("Fetching all tasks grouped by section")
+            sections = await task_storage.get_tasks_by_ui_section(account)
+            logger.info(f"Found tasks in sections: {[k for k,v in sections.items() if v]}")
+            return sections
+            
     except Exception as e:
         logger.error(f"Error getting tasks for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
