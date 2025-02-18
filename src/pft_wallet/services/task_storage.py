@@ -1,21 +1,16 @@
-import os
-from xrpl.wallet import Wallet
-
-# Set a random seed for development before importing tasknode
-dev_wallet = Wallet.create()
-os.environ['TASK_NODE_SEED'] = dev_wallet.seed
-
 from typing import List, Dict, Any, Optional
 from tasknode.rpc import CachingRpcClient
 from tasknode.messages import Message
-from tasknode.state.state_event_sourcer import TaskStatus, TaskNodeState
+from tasknode.state import TaskStatus, UserState
+from tasknode.utils.streams import combine_streams
+from tasknode.codec.task_codec_v0 import decode_account_stream as decode_task_stream
+from tasknode.codec.remembrancer_codec_v0 import decode_account_stream as decode_remembrancer_stream
 from pft_wallet.config import settings
 from pathlib import Path
 import logging
 import asyncio
-import re
 
-from tasknode.constants import EARLIEST_LEDGER_SEQ
+from tasknode.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +44,8 @@ class TaskStorage:
             cache_dir=str(cache_dir)
         )
 
-        # TaskNodeState is a single aggregator for all user accounts in memory
-        self._state = TaskNodeState()
+        # UserState is a single aggregator for all user accounts in memory
+        self._state = UserState()
 
         # For each user (wallet address), track:
         #  - last processed ledger
@@ -69,13 +64,13 @@ class TaskStorage:
     async def initialize_user_tasks(self, wallet_address: str) -> None:
         """
         Fetches all existing transactions/messages for the user from the earliest ledger
-        to the latest, updating TaskNodeState. This is typically called when a user
+        to the latest, updating the state. This is typically called when a user
         "signs in" or appears in the UI for the first time.
         
-        The result is that the user has an in-memory AccountState in `self._state`
+        The result is that the user has an in-memory state in `self._state`
         containing tasks, handshake info, and so on.
         """
-        logger.info(f"Initializing TaskNodeState for {wallet_address}")
+        logger.info(f"Initializing state for {wallet_address}")
 
         # We begin at EARLIEST_LEDGER_SEQ.ledger_seq.  -1 means "latest"
         start_ledger = EARLIEST_LEDGER_SEQ.ledger_seq
@@ -84,10 +79,12 @@ class TaskStorage:
         newest_ledger_seen = None
 
         # Fetch and decode all messages from earliest to latest
-        async for msg in self.client.get_account_msgs(
-            account=wallet_address,
-            start_ledger=start_ledger,
-            end_ledger=end_ledger
+        task_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+        remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+        
+        async for msg in combine_streams(
+            decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
+            decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
         ):
             self._state.update(msg)
             newest_ledger_seen = msg.ledger_seq
@@ -207,13 +204,8 @@ class TaskStorage:
         Return tasks from in-memory state for the specified wallet, optionally filtered
         by TaskStatus.
         """
-        # Ensure the user's account is in memory (if not, or if they haven't run init yet, do so)
-        if wallet_address not in self._state.accounts:
-            logger.debug(f"{wallet_address} not in state, initializing user tasks.")
-            await self.initialize_user_tasks(wallet_address)
-
         # Grab the user's in-memory AccountState
-        account_state = self._state.accounts.get(wallet_address)
+        account_state = self._state.node_account
         if not account_state:
             logger.warning(f"No AccountState found for {wallet_address}")
             return []
@@ -240,11 +232,6 @@ class TaskStorage:
         """
         Organize tasks from the in-memory state into their respective status sections.
         """
-        # Ensure the user is initialized
-        if wallet_address not in self._state.accounts:
-            logger.debug(f"{wallet_address} not in state, initializing user tasks.")
-            await self.initialize_user_tasks(wallet_address)
-
         # Fetch all tasks from in-memory state
         tasks = await self.get_tasks_by_state(wallet_address)
 
