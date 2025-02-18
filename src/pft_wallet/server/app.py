@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pft_wallet.server.api import router as api_router  # Adjust the import if your API router is defined elsewhere
+from pft_wallet.services.storage import init_storage
 
 def create_app():
     app = FastAPI(title="PFT Wallet API")
@@ -25,6 +26,7 @@ def create_app():
             app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
         else:
             print(f"Static directory '{static_dir}' not found. UI will not be available.")
-    
+
+    init_storage()
     
     return app
