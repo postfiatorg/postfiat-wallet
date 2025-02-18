@@ -51,86 +51,91 @@ const SummaryPage = () => {
     fetchSummary();
   }, [address]);
 
-  // Fetch tasks (recent activity), extract timestamp from the task id, log it, and then sort the tasks by it (most recent first)
+  // Start the refresh loop when the component mounts
   useEffect(() => {
-    const fetchTasks = async () => {
-      if (!address) {
-        setLoadingTasks(false);
-        return;
-      }
-      setLoadingTasks(true);
+    const startRefreshLoop = async () => {
+      if (!address) return;
+      
       try {
-        const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(`Failed to fetch tasks: ${text}`);
-        }
-        const data = await response.json();
-        console.log("=== Task Message Analysis ===");
-        console.log("Raw task data:", data);
-        
-        // When no status is provided, our API returns tasks grouped by status.
-        // Flatten the results from an object into an array.
-        const flattenedTasks = Object.values(data).flat();
-        
-        // Analyze message directions
-        let userToNodeCount = 0;
-        let nodeToUserCount = 0;
-        
-        flattenedTasks.forEach(task => {
-          console.log("\nTask ID:", task.id);
-          console.log("Status:", task.status);
-          console.log("Message History:", task.message_history);
-          
-          // Count message directions
-          task.message_history?.forEach(msg => {
-            if (msg.direction === 'outbound') {
-              userToNodeCount++;
-            } else if (msg.direction === 'inbound') {
-              nodeToUserCount++;
-            }
-            console.log(`Message Direction: ${msg.direction}, Content: ${msg.data}`);
-          });
+        await fetch(`http://localhost:8000/api/tasks/start-refresh/${address}`, {
+          method: 'POST'
         });
-        
-        console.log("\n=== Message Direction Summary ===");
-        console.log(`User -> Node messages: ${userToNodeCount}`);
-        console.log(`Node -> User messages: ${nodeToUserCount}`);
-        
-        // Function to parse timestamp from task id. Adjust as needed.
-        const parseTimestamp = (id: string): number => {
-          const tsStr = id.split('__')[0]; // e.g., "2025-01-16_10:02"
-          // Replace the first underscore (between date and time) with 'T' and append seconds (":00")
-          const isoTimestamp = tsStr.replace('_', 'T') + ":00"; // becomes "2025-01-16T10:02:00"
-          return new Date(isoTimestamp).getTime();
-        };
-
-        // Sort tasks by the extracted timestamp in descending order.
-        flattenedTasks.sort((a, b) => {
-          return parseTimestamp(b.id) - parseTimestamp(a.id);
-        });
-        console.log("Sorted tasks:", flattenedTasks);
-        
-        // Add detailed logging for each task
-        console.log("\n=== Detailed Task Analysis ===");
-        flattenedTasks.forEach((task, index) => {
-          console.log(`\nTask ${index + 1}:`);
-          console.log("ID:", task.id);
-          console.log("Status:", task.status);
-          console.log("Full task object:", task);
-        });
-        
-        setTasks(flattenedTasks);
+        console.log("Started task refresh loop");
       } catch (error) {
-        console.error("Error fetching tasks:", error);
-        setTasksError(
-          error instanceof Error ? error.message : "An error occurred while fetching tasks"
-        );
-      } finally {
-        setLoadingTasks(false);
+        console.error("Failed to start refresh loop:", error);
       }
     };
 
+    startRefreshLoop();
+
+    // Cleanup: stop the refresh loop when component unmounts
+    return () => {
+      if (address) {
+        fetch(`http://localhost:8000/api/tasks/stop-refresh/${address}`, {
+          method: 'POST'
+        }).catch(error => {
+          console.error("Failed to stop refresh loop:", error);
+        });
+      }
+    };
+  }, [address]);
+
+  // Add periodic frontend refresh (every 30 seconds)
+  useEffect(() => {
+    if (!address) return;
+
+    const intervalId = setInterval(() => {
+      fetchTasks();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(intervalId);
+  }, [address]);
+
+  // Extract fetchTasks into a separate function so we can reuse it
+  const fetchTasks = async () => {
+    if (!address) {
+      setLoadingTasks(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to fetch tasks: ${text}`);
+      }
+      const data = await response.json();
+      
+      // When no status is provided, our API returns tasks grouped by status.
+      // Flatten the results from an object into an array.
+      const flattenedTasks = Object.values(data).flat();
+      
+      // Function to parse timestamp from task id. Adjust as needed.
+      const parseTimestamp = (id: string): number => {
+        const tsStr = id.split('__')[0]; // e.g., "2025-01-16_10:02"
+        // Replace the first underscore (between date and time) with 'T' and append seconds (":00")
+        const isoTimestamp = tsStr.replace('_', 'T') + ":00"; // becomes "2025-01-16T10:02:00"
+        return new Date(isoTimestamp).getTime();
+      };
+
+      // Sort tasks by the extracted timestamp in descending order.
+      flattenedTasks.sort((a, b) => {
+        return parseTimestamp(b.id) - parseTimestamp(a.id);
+      });
+      
+      setTasks(flattenedTasks);
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      setTasksError(
+        error instanceof Error ? error.message : "An error occurred while fetching tasks"
+      );
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+  // Initial fetch
+  useEffect(() => {
     fetchTasks();
   }, [address]);
 

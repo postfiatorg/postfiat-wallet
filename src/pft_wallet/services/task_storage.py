@@ -19,6 +19,7 @@ import logging
 import asyncio
 
 from tasknode.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
+from tasknode.codec.task_codec_v0 import decode_account_txn
 
 logger = logging.getLogger(__name__)
 
@@ -211,12 +212,15 @@ class TaskStorage:
         logger.info(f"Fetching user tasks for {wallet_address} from {start_ledger} to {end_ledger}")
         msgs = []
         try:
-            async for msg in self.client.get_account_msgs(
+            # First get the transactions using the available method
+            async for txn in self.client.get_account_txns(
                 account=wallet_address,
                 start_ledger=start_ledger,
                 end_ledger=end_ledger
             ):
-                msgs.append(msg)
+                # Then decode them into messages using the task codec
+                if msg := decode_account_txn(txn, node_account=wallet_address):
+                    msgs.append(msg)
         except Exception as e:
             logger.error(f"Error getting messages for {wallet_address}: {e}")
             raise
