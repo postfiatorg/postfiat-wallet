@@ -4,7 +4,10 @@ from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
 from xrpl.core.keypairs import derive_classic_address
+from xrpl.models.transactions import Payment, TrustSet
+from xrpl.transaction import sign_and_submit
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -99,4 +102,98 @@ class BlockchainService:
             return summary
         except Exception as e:
             logger.error(f"Error in get_account_summary: {str(e)}")
+            raise
+
+    def _sign_and_send_transaction_sync(self, unsigned_tx: dict, seed: str) -> dict:
+        """
+        Synchronous method to sign and send a transaction.
+        
+        Args:
+            unsigned_tx: The unsigned transaction dictionary
+            seed: The user's secret key/seed
+            
+        Returns:
+            The transaction submission result
+        """
+        try:
+            wallet = Wallet.from_seed(seed)
+            payment = Payment.from_dict(unsigned_tx)
+            logger.debug(f"Signing and submitting transaction for account: {wallet.classic_address}")
+            
+            response = sign_and_submit(
+                transaction=payment,
+                client=self.client,
+                wallet=wallet,
+                autofill=True,
+                check_fee=True
+            )
+            logger.debug(f"Transaction response: {response.result}")
+            return response.result
+        except Exception as e:
+            logger.error(f"Error in _sign_and_send_transaction_sync: {str(e)}")
+            raise
+
+    async def sign_and_send_transaction(self, unsigned_tx: dict, seed: str) -> dict:
+        """
+        Asynchronous wrapper to sign and send a transaction.
+        
+        Args:
+            unsigned_tx: The unsigned transaction dictionary
+            seed: The user's secret key/seed
+            
+        Returns:
+            The transaction submission result
+        """
+        try:
+            result = await asyncio.to_thread(self._sign_and_send_transaction_sync, unsigned_tx, seed)
+            return result
+        except Exception as e:
+            logger.error(f"Error in sign_and_send_transaction: {str(e)}")
+            raise
+
+    def _sign_and_send_trust_set_sync(self, trust_set_tx: TrustSet, seed: str) -> dict:
+        """
+        Synchronous method to sign and send a trust set transaction.
+        
+        Args:
+            trust_set_tx: The TrustSet transaction object
+            seed: The user's secret key/seed
+            
+        Returns:
+            The transaction submission result
+        """
+        try:
+            wallet = Wallet.from_seed(seed)
+            logger.debug(f"Signing trust set for account: {wallet.classic_address}")
+            logger.debug(f"Trust set object: {trust_set_tx.to_dict()}")
+            
+            response = sign_and_submit(
+                transaction=trust_set_tx,
+                client=self.client,
+                wallet=wallet,
+                autofill=True,
+                check_fee=True
+            )
+            logger.debug(f"Trust set response: {response.result}")
+            return response.result
+        except Exception as e:
+            logger.error(f"Error in _sign_and_send_trust_set_sync: {str(e)}")
+            raise
+
+    async def sign_and_send_trust_set(self, trust_set_tx: TrustSet, seed: str) -> dict:
+        """
+        Asynchronous wrapper to sign and send a trust set transaction.
+        
+        Args:
+            trust_set_tx: The TrustSet transaction object
+            seed: The user's secret key/seed
+            
+        Returns:
+            The transaction submission result
+        """
+        try:
+            result = await asyncio.to_thread(self._sign_and_send_trust_set_sync, trust_set_tx, seed)
+            return result
+        except Exception as e:
+            logger.error(f"Error in sign_and_send_trust_set: {str(e)}")
             raise

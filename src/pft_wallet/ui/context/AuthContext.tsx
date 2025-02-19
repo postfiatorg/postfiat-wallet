@@ -9,6 +9,7 @@ const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   address: null,
   username: null,
+  password: null,
   clearAuth: async () => {}
 });
 

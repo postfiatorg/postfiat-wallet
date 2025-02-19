@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function AuthPage({ onAuth }: { onAuth: (address: string, username: string) => void }) {
+export default function AuthPage({ onAuth }: { onAuth: (address: string, username: string, password: string) => void }) {
   const [mode, setMode] = useState<'signin' | 'signup' | 'generate'>('signin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -86,7 +86,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
         setError('Account created successfully! Please sign in.');
       } else {
         // Normal signin flow - pass both address and username
-        onAuth(data.address, username);
+        onAuth(data.address, username, password);
       }
     } catch (err) {
       console.error("Error in handleSubmit:", err);

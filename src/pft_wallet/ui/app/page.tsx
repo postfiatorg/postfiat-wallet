@@ -16,7 +16,8 @@ export default function Home() {
   const [auth, setAuth] = useState<AuthState>({
     isAuthenticated: false,
     address: null,
-    username: null
+    username: null,
+    password: null
   });
 
   useEffect(() => {
@@ -27,26 +28,30 @@ export default function Home() {
       setAuth({
         isAuthenticated: true,
         address: storedAddress,
-        username: storedUsername
+        username: storedUsername,
+        password: null
       });
     }
   }, []);
 
-  const handleAuth = (address: string, username: string) => {
+  const handleAuth = (address: string, username: string, password: string) => {
     setAuth({
       isAuthenticated: true,
       address,
-      username
+      username,
+      password
     });
     localStorage.setItem('wallet_address', address);
     localStorage.setItem('username', username);
+    // Note: We intentionally don't store password in localStorage for security
   };
 
   const handleSignOut = () => {
     setAuth({
       isAuthenticated: false,
       address: null,
-      username: null
+      username: null,
+      password: null
     });
     localStorage.removeItem('wallet_address');
     localStorage.removeItem('username');

@@ -8,7 +8,8 @@ import logging
 from pft_wallet.services.task_storage import TaskStorage
 from enum import Enum
 from tasknode.state import TaskStatus
-from typing import Optional
+from typing import Optional, Dict, Any
+from pft_wallet.services.transaction import TransactionBuilder
 
 app = FastAPI()
 
@@ -30,6 +31,9 @@ blockchain = BlockchainService()
 # Create one global TaskStorage instance
 task_storage = TaskStorage()
 
+# Add this near other service instantiations
+transaction_builder = TransactionBuilder()
+
 # This enum mirrors TaskStatus in the backend so we can filter tasks by status
 class TaskStatusAPI(str, Enum):
     INVALID = "invalid"
@@ -47,6 +51,13 @@ class WalletAuth(BaseModel):
     password: str
     private_key: Optional[str] = None  # Only needed for signup
     address: Optional[str] = None      # Only needed for signup
+
+class UserTransactionRequest(BaseModel):
+    """Request model for user-to-node transactions"""
+    account: str
+    tx_type: str  # 'initiation_rite', 'task_request', 'task_refusal', etc.
+    password: str  # User's wallet password for decrypting the seed
+    data: Dict[str, Any]  # Transaction-specific data (varies by tx_type)
 
 @router.get("/health")
 def health_check():
@@ -248,6 +259,55 @@ async def clear_task_state(account: str):
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Error clearing state for {account}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/transaction/send")
+async def send_user_transaction(request: UserTransactionRequest):
+    logger.info(f"Received transaction request: {request.tx_type} from {request.account}")
+    logger.debug(f"Request data (excluding password): {request.data}")
+    
+    try:
+        # Get wallet info and decrypt the seed
+        logger.debug(f"Getting wallet info for account: {request.account}")
+        wallet_info = storage.get_wallet(request.account)
+        
+        try:
+            logger.debug("Attempting to decrypt private key")
+            seed = storage.decrypt_private_key(
+                wallet_info["encrypted_key"], 
+                request.password
+            )
+        except ValueError as e:
+            logger.error(f"Failed to decrypt key for account {request.account}: {str(e)}")
+            raise HTTPException(
+                status_code=401, 
+                detail=f"Invalid password: {str(e)}"
+            )
+
+        logger.info("Building unsigned transaction")
+        unsigned_tx = transaction_builder.build_transaction(
+            account=request.account,
+            tx_type=request.tx_type,
+            data=request.data
+        )
+        
+        logger.info("Signing and sending transaction")
+        result = await blockchain.sign_and_send_transaction(
+            unsigned_tx=unsigned_tx,
+            seed=seed
+        )
+        
+        logger.info("Transaction sent successfully")
+        return {
+            "status": "success",
+            "transaction": result
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid transaction request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error processing transaction: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api
