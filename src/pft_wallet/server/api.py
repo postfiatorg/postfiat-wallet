@@ -7,7 +7,7 @@ from pft_wallet.services import storage
 import logging
 from pft_wallet.services.task_storage import TaskStorage
 from enum import Enum
-from tasknode.state import TaskStatus
+from postfiat.nodes.task.state import TaskStatus
 from typing import Optional, Dict, Any
 from pft_wallet.services.transaction import TransactionBuilder
 
