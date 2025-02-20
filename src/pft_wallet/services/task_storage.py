@@ -1,25 +1,17 @@
-import os
-from xrpl.wallet import Wallet
-
-# Set a random seed for development before importing tasknode
-dev_wallet = Wallet.create()
-os.environ['TASK_NODE_SEED'] = dev_wallet.seed
-
-# Now we can import tasknode modules that depend on TASK_NODE_SEED
 from typing import List, Dict, Any, Optional
-from tasknode.rpc import CachingRpcClient
-from tasknode.messages import Message
-from tasknode.state import TaskStatus, UserState
-from tasknode.utils.streams import combine_streams
-from tasknode.codec.task_codec_v0 import decode_account_stream as decode_task_stream
-from tasknode.codec.remembrancer_codec_v0 import decode_account_stream as decode_remembrancer_stream
+from postfiat.rpc import CachingRpcClient
+from postfiat.nodes.task.models.messages import Message
+from postfiat.nodes.task.state import TaskStatus, UserState
+from postfiat.utils.streams import combine_streams
+from postfiat.nodes.task.codecs.v0.task import decode_account_stream as decode_task_stream
+from postfiat.nodes.task.codecs.v0.remembrancer import decode_account_stream as decode_remembrancer_stream
 from pft_wallet.config import settings
 from pathlib import Path
 import logging
 import asyncio
 
-from tasknode.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
-from tasknode.codec.task_codec_v0 import decode_account_txn
+from postfiat.nodes.task.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
+from postfiat.nodes.task.codecs.v0.task import decode_account_txn
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +59,7 @@ class TaskStorage:
     async def get_ledger_range(self, wallet_address: str) -> tuple[int, int]:
         """Get valid ledger range for an account"""
         # Use a fixed starting point for now since we don't need account creation ledger
-        first_ledger = EARLIEST_LEDGER_SEQ.ledger_seq
+        first_ledger = EARLIEST_LEDGER_SEQ
         return first_ledger, -1  # -1 indicates latest ledger
 
     async def initialize_user_tasks(self, wallet_address: str) -> None:
@@ -77,7 +69,7 @@ class TaskStorage:
         """
         logger.info(f"Initializing state for {wallet_address}")
 
-        start_ledger = EARLIEST_LEDGER_SEQ.ledger_seq
+        start_ledger = EARLIEST_LEDGER_SEQ
         end_ledger = -1
 
         newest_ledger_seen = None
@@ -146,7 +138,7 @@ class TaskStorage:
                     if start_ledger is None:
                         # If the user wasn't initialized, do it now automatically
                         await self.initialize_user_tasks(wallet_address)
-                        start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ.ledger_seq)
+                        start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
 
                     # We'll fetch from the last processed + 1 up to 'latest' (-1)
                     task_txn_stream = self.client.get_account_txns(
@@ -213,7 +205,7 @@ class TaskStorage:
         If start_ledger or end_ledger are None, defaults are used (earliest / latest).
         """
         if start_ledger is None:
-            start_ledger = EARLIEST_LEDGER_SEQ.ledger_seq
+            start_ledger = EARLIEST_LEDGER_SEQ
         if end_ledger is None:
             end_ledger = -1
 
