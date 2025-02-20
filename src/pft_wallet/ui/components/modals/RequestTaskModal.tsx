@@ -1,4 +1,4 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
 import { generateCustomId } from '../../utils/taskId';
@@ -7,14 +7,19 @@ interface RequestTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRequest: (message: string) => void;
+  initialMessage: string;
 }
 
-export function RequestTaskModal({ isOpen, onClose, onRequest }: RequestTaskModalProps) {
-  const [message, setMessage] = useState('');
+export function RequestTaskModal({ isOpen, onClose, onRequest, initialMessage }: RequestTaskModalProps) {
+  const [message, setMessage] = useState(initialMessage);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const { address, username, password } = useContext(AuthContext);
+
+  useEffect(() => {
+    setMessage(initialMessage);
+  }, [initialMessage]);
 
   if (!isOpen) return null;
 

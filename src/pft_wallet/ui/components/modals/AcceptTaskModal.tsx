@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
 
@@ -7,14 +7,19 @@ interface AcceptTaskModalProps {
   onClose: () => void;
   taskId: string;
   onAccept: (taskId: string, message: string) => void;
+  initialMessage: string;
 }
 
-const AcceptTaskModal = ({ isOpen, onClose, taskId, onAccept }: AcceptTaskModalProps) => {
-  const [message, setMessage] = useState('');
+const AcceptTaskModal = ({ isOpen, onClose, taskId, onAccept, initialMessage }: AcceptTaskModalProps) => {
+  const [message, setMessage] = useState(initialMessage);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const { address, username, password } = useContext(AuthContext);
+
+  useEffect(() => {
+    setMessage(initialMessage);
+  }, [initialMessage]);
 
   if (!isOpen) return null;
 

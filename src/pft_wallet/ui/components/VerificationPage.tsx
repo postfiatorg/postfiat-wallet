@@ -1,15 +1,86 @@
-import React from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/custom-card';
+import { AuthContext } from '../context/AuthContext';
+
+import FinalVerificationModal from './modals/FinalVerificationModal';
+import RefuseTaskModal from './modals/RefuseTaskModal';
 
 const VerificationPage = () => {
-  const verificationData = [
-    {
-      id: 1,
-      taskId: '2025-01-22_17:18__FN84',
-      proposal: 'Create a TypeScript component active_nodes_section.tsx that implements a grid layout showcasing PosiFiat\'s active nodes (Task Node and Image Generation Node). Include concise descriptions of each node\'s purpose, current operational status, and GitHub repository links. Add responsive styling using Tailwind CSS and implement unit tests verifying proper rendering of node information cards... 900',
-      verification: 'Please provide: 1) The GitHub commit URL showing your implementation of active_nodes_section.tsx, 2) A brief description (2-3 sentences) of how you implemented the grid layout using Tailwind CSS, and 3) The number of unit tests you created and what they verify. Note: If the repository is private, please paste the component\'s code in the verification document section.'
+  const { isAuthenticated, address } = useContext(AuthContext);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('');
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [showRefuseModal, setShowRefuseModal] = useState(false);
+  const [verificationDetails, setVerificationDetails] = useState('');
+
+  // Fetch tasks from the API
+  const fetchTasks = async () => {
+    if (!address) {
+      setLoading(false);
+      return;
     }
-  ];
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to fetch tasks: ${text}`);
+      }
+      const data = await response.json();
+
+      // Only get challenged tasks
+      let tasksToDisplay = data.challenged || [];
+
+      // Sort tasks by timestamp
+      const parseTimestamp = (id: string): number => {
+        const tsStr = id.split('__')[0];
+        const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+        return new Date(isoTimestamp).getTime();
+      };
+
+      tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+      setTasks(tasksToDisplay);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial fetch and refresh setup
+  useEffect(() => {
+    if (!isAuthenticated || !address) return;
+
+    fetchTasks();
+    const intervalId = setInterval(fetchTasks, 30000); // 30 seconds refresh
+
+    return () => clearInterval(intervalId);
+  }, [isAuthenticated, address]);
+
+  const toggleTaskExpansion = (taskId: string) => {
+    setExpandedTasks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId);
+      } else {
+        newSet.add(taskId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleVerificationSubmit = (taskId: string, details: string) => {
+    // Refresh tasks after submission
+    fetchTasks();
+  };
+
+  const handleRefuseTask = (taskId: string, reason: string) => {
+    // Refresh tasks after refusal
+    fetchTasks();
+  };
 
   return (
     <div className="space-y-6">
@@ -24,6 +95,8 @@ const VerificationPage = () => {
             <label className="text-sm font-medium text-slate-400">Task ID</label>
             <input
               type="text"
+              value={selectedTaskId}
+              onChange={(e) => setSelectedTaskId(e.target.value)}
               className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg 
                         text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                         focus:ring-emerald-500/50 focus:border-emerald-500/50"
@@ -35,6 +108,8 @@ const VerificationPage = () => {
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-400">Verification Details</label>
             <textarea
+              value={verificationDetails}
+              onChange={(e) => setVerificationDetails(e.target.value)}
               className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                         text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                         focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
@@ -45,12 +120,16 @@ const VerificationPage = () => {
           {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-3">
-              <button className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
-                              text-white rounded-lg transition-colors text-sm font-medium">
+              <button 
+                onClick={() => setShowVerificationModal(true)}
+                className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
+                          text-white rounded-lg transition-colors text-sm font-medium">
                 Submit Verification Details
               </button>
-              <button className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                              text-white rounded-lg transition-colors text-sm font-medium">
+              <button 
+                onClick={() => setShowRefuseModal(true)}
+                className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
+                          text-white rounded-lg transition-colors text-sm font-medium">
                 Refuse
               </button>
             </div>
@@ -74,35 +153,96 @@ const VerificationPage = () => {
           <CardTitle className="text-lg font-semibold text-white">Verification History</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {verificationData.map((item) => (
-              <div key={item.id} className="p-4 rounded-lg bg-slate-800/50">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-slate-400">#{item.id}</span>
-                    <span className="text-xs font-mono text-slate-400">{item.taskId}</span>
+          {loading ? (
+            <div className="text-slate-500">Loading tasks...</div>
+          ) : error ? (
+            <div className="text-red-500">Error: {error}</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-slate-500">No tasks available for verification.</div>
+          ) : (
+            <div className="space-y-4">
+              {tasks.map((task) => {
+                const tsStr = task.id.split('__')[0];
+                const displayTs = tsStr.replace('_', ' ');
+                const verificationMessage = task.message_history?.[4]?.data || "No verification message available";
+
+                return (
+                  <div 
+                    key={task.id} 
+                    className="p-4 rounded-lg bg-slate-800/50 cursor-pointer hover:bg-slate-800"
+                    onClick={() => setSelectedTaskId(task.id)}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-slate-400">{task.id}</span>
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-700 text-slate-300">
+                          Challenged
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleTaskExpansion(task.id);
+                        }}
+                        className="px-3 py-1 text-xs font-medium text-slate-400 hover:text-white 
+                                 bg-slate-700/50 hover:bg-slate-700 rounded-full transition-colors"
+                      >
+                        {expandedTasks.has(task.id) ? 'Hide Messages' : 'Show Messages'}
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="text-sm font-medium text-slate-400 mb-1">Verification Message</h3>
+                        <p className="text-sm text-slate-300">{verificationMessage}</p>
+                        <p className="text-xs text-slate-500 mt-2">{displayTs}</p>
+                      </div>
+                      
+                      {expandedTasks.has(task.id) && task.message_history && (
+                        <div className="mt-4 pt-4 border-t border-slate-700">
+                          <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
+                          <div className="space-y-3">
+                            {task.message_history.map((msg, idx) => (
+                              <div key={idx} className="text-sm">
+                                <span className="text-slate-400 font-medium">
+                                  {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
+                                </span>
+                                <p className="text-slate-300 mt-1 pl-4">{msg.data}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-700 text-slate-300">
-                    Pending Verification
-                  </span>
-                </div>
-                
-                <div className="space-y-3">
-                  <div>
-                    <h3 className="text-sm font-medium text-slate-400 mb-1">Proposal</h3>
-                    <p className="text-sm text-slate-300">{item.proposal}</p>
-                  </div>
-                  
-                  <div>
-                    <h3 className="text-sm font-medium text-slate-400 mb-1">Verification Requirements</h3>
-                    <p className="text-sm text-slate-300">{item.verification}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      <FinalVerificationModal
+        isOpen={showVerificationModal}
+        onClose={() => setShowVerificationModal(false)}
+        taskId={selectedTaskId}
+        onSubmit={(taskId, details) => {
+          handleVerificationSubmit(taskId, details);
+          setVerificationDetails(''); // Clear the input after submission
+        }}
+        initialDetails={verificationDetails}
+      />
+
+      <RefuseTaskModal
+        isOpen={showRefuseModal}
+        onClose={() => setShowRefuseModal(false)}
+        taskId={selectedTaskId}
+        onRefuse={(taskId, reason) => {
+          handleRefuseTask(taskId, reason);
+          setVerificationDetails(''); // Clear the input after submission
+        }}
+        initialReason={verificationDetails}
+      />
     </div>
   );
 };

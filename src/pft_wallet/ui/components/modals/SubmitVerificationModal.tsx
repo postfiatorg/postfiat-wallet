@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
 
@@ -7,14 +7,19 @@ interface SubmitVerificationModalProps {
   onClose: () => void;
   taskId: string;
   onSubmit: (taskId: string, details: string) => void;
+  initialDetails: string;
 }
 
-const SubmitVerificationModal = ({ isOpen, onClose, taskId, onSubmit }: SubmitVerificationModalProps) => {
-  const [details, setDetails] = useState('');
+const SubmitVerificationModal = ({ isOpen, onClose, taskId, onSubmit, initialDetails }: SubmitVerificationModalProps) => {
+  const [details, setDetails] = useState(initialDetails);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const { address, username, password } = useContext(AuthContext);
+
+  useEffect(() => {
+    setDetails(initialDetails);
+  }, [initialDetails]);
 
   if (!isOpen) return null;
 

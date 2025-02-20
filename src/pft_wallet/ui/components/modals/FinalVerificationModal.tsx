@@ -2,24 +2,24 @@ import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
 
-interface RefuseTaskModalProps {
+interface FinalVerificationModalProps {
   isOpen: boolean;
   onClose: () => void;
   taskId: string;
-  onRefuse: (taskId: string, reason: string) => void;
-  initialReason: string;
+  onSubmit: (taskId: string, details: string) => void;
+  initialDetails: string;
 }
 
-const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: RefuseTaskModalProps) => {
-  const [reason, setReason] = useState(initialReason);
+const FinalVerificationModal = ({ isOpen, onClose, taskId, onSubmit, initialDetails }: FinalVerificationModalProps) => {
+  const [details, setDetails] = useState(initialDetails);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const { address, username, password } = useContext(AuthContext);
 
   useEffect(() => {
-    setReason(initialReason);
-  }, [initialReason]);
+    setDetails(initialDetails);
+  }, [initialDetails]);
 
   if (!isOpen) return null;
 
@@ -29,20 +29,20 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
       setShowPasswordModal(true);
       return;
     }
-    await submitRefusal(password);
+    await submitVerificationResponse(password);
   };
 
-  const submitRefusal = async (passwordToUse: string) => {
+  const submitVerificationResponse = async (passwordToUse: string) => {
     setError('');
     setIsSubmitting(true);
 
     try {
       const requestData = {
         account: address,
-        tx_type: 'task_refusal',
+        tx_type: 'verification_response',
         password: passwordToUse,
         data: {
-          refusal_reason: reason,
+          verification_response: details,
           task_id: taskId,
           username: username
         }
@@ -70,12 +70,12 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
       const result = await response.json();
       console.log('Success response:', result);
 
-      onRefuse(taskId, reason);
-      setReason('');
+      onSubmit(taskId, details);
+      setDetails('');
       onClose();
     } catch (err) {
-      console.error('Error refusing task:', err);
-      setError(err instanceof Error ? err.message : 'Failed to refuse task');
+      console.error('Error submitting verification response:', err);
+      setError(err instanceof Error ? err.message : 'Failed to submit verification response');
     } finally {
       setIsSubmitting(false);
     }
@@ -86,7 +86,7 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div className="bg-slate-900 border border-slate-800 rounded-lg w-full max-w-lg">
           <div className="p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Refuse Task</h2>
+            <h2 className="text-lg font-semibold text-white mb-4">Submit Verification Response</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-400">Task ID</label>
@@ -99,14 +99,14 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-400">Reason for Refusal</label>
+                <label className="text-sm font-medium text-slate-400">Verification Response</label>
                 <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
+                  value={details}
+                  onChange={(e) => setDetails(e.target.value)}
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                             text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
-                            focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[100px]"
-                  placeholder="Enter reason for refusing the task..."
+                            focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
+                  placeholder="Enter your verification response..."
                   required
                 />
               </div>
@@ -126,11 +126,11 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-500 
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 
                            text-white rounded-lg transition-colors text-sm font-medium
                            disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isSubmitting ? 'Sending...' : 'Refuse Task'}
+                  {isSubmitting ? 'Sending...' : 'Submit Response'}
                 </button>
               </div>
             </form>
@@ -143,7 +143,7 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
         onClose={() => setShowPasswordModal(false)}
         onConfirm={async (password) => {
           setShowPasswordModal(false);
-          await submitRefusal(password);
+          await submitVerificationResponse(password);
         }}
         error={error}
       />
@@ -151,4 +151,4 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
   );
 };
 
-export default RefuseTaskModal; 
+export default FinalVerificationModal; 

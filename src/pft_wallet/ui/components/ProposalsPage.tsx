@@ -23,6 +23,7 @@ const ProposalsPage = () => {
     verify: false
   });
   const [modalError, setModalError] = useState<string | null>(null);
+  const [taskDetails, setTaskDetails] = useState('');
 
   // Fetch tasks from the API
   const fetchTasks = async () => {
@@ -213,6 +214,8 @@ const ProposalsPage = () => {
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-400">Task Details</label>
                 <textarea
+                  value={taskDetails}
+                  onChange={(e) => setTaskDetails(e.target.value)}
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                             text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                             focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
@@ -368,24 +371,40 @@ const ProposalsPage = () => {
             isOpen={modalState.accept}
             onClose={() => handleModalClose('accept')}
             taskId={selectedTaskId}
-            onAccept={handleAcceptTask}
+            onAccept={(taskId, message) => {
+              handleAcceptTask(taskId, message);
+              setTaskDetails('');
+            }}
+            initialMessage={taskDetails}
           />
           <RequestTaskModal
             isOpen={modalState.request}
             onClose={() => handleModalClose('request')}
-            onRequest={handleRequestTask}
+            onRequest={(message) => {
+              handleRequestTask(message);
+              setTaskDetails('');
+            }}
+            initialMessage={taskDetails}
           />
           <RefuseTaskModal
             isOpen={modalState.refuse}
             onClose={() => handleModalClose('refuse')}
             taskId={selectedTaskId}
-            onRefuse={handleRefuseTask}
+            onRefuse={(taskId, reason) => {
+              handleRefuseTask(taskId, reason);
+              setTaskDetails('');
+            }}
+            initialReason={taskDetails}
           />
           <SubmitVerificationModal
             isOpen={modalState.verify}
             onClose={() => handleModalClose('verify')}
             taskId={selectedTaskId}
-            onSubmit={handleSubmitVerification}
+            onSubmit={(taskId, details) => {
+              handleSubmitVerification(taskId, details);
+              setTaskDetails('');
+            }}
+            initialDetails={taskDetails}
           />
         </>
       )}
