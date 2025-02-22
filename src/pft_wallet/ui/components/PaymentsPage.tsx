@@ -16,9 +16,13 @@ const PaymentsPage = () => {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [error, setError] = useState('');
 
+  // Add loading state
+  const [isLoading, setIsLoading] = useState(true);
+
   const fetchPayments = async () => {
     if (!address) return;
     
+    setIsLoading(true);
     try {
       const response = await fetch(`http://localhost:8000/api/payments/${address}`);
       if (!response.ok) {
@@ -26,7 +30,6 @@ const PaymentsPage = () => {
       }
       const data = await response.json();
       
-      // Sort transactions by timestamp in descending order
       const sortedTransactions = data.payments.sort((a: any, b: any) => {
         return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
       });
@@ -34,6 +37,8 @@ const PaymentsPage = () => {
       setTransactions(sortedTransactions);
     } catch (error) {
       console.error('Error fetching payments:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -90,10 +95,10 @@ const PaymentsPage = () => {
       
       // Refresh transactions list
       await fetchPayments();
-    } catch (err) {
+    } catch (err: any) {
       setError(err.message);
       setStatus('error');
-      throw err; // Re-throw to be caught by the modal
+      throw err;
     }
   };
 
@@ -195,23 +200,44 @@ const PaymentsPage = () => {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((tx, index) => (
-                <tr key={index} className="border-b border-gray-800 hover:bg-gray-800/50">
-                  <td className="p-4 text-gray-300">{index + 1}</td>
-                  <td className="p-4 text-gray-300 whitespace-nowrap">{tx.timestamp}</td>
-                  <td className="p-4 text-gray-300">{tx.amount_xrp > 0 ? tx.amount_xrp : tx.amount_pft}</td>
-                  <td className="p-4 text-gray-300">
-                    {tx.amount_xrp > 0 ? 'XRP' : (tx.amount_pft > 0 ? 'PFT' : '')}
+              {isLoading ? (
+                // Skeleton loader rows
+                [...Array(5)].map((_, index) => (
+                  <tr key={`skeleton-${index}`} className="border-b border-gray-800 animate-pulse">
+                    <td className="p-4"><div className="h-4 w-8 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-24 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-16 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-12 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-8 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-32 bg-gray-700 rounded"></div></td>
+                    <td className="p-4"><div className="h-4 w-40 bg-gray-700 rounded"></div></td>
+                  </tr>
+                ))
+              ) : transactions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center p-8 text-gray-400">
+                    No transactions found
                   </td>
-                  <td className="p-4 text-gray-300">
-                    {tx.from_address === address ? 'To' : 'From'}
-                  </td>
-                  <td className="p-4 text-gray-300 font-mono">
-                    {tx.from_address === address ? tx.to_address : tx.from_address}
-                  </td>
-                  <td className="p-4 text-gray-300 font-mono">{tx.hash}</td>
                 </tr>
-              ))}
+              ) : (
+                transactions.map((tx, index) => (
+                  <tr key={index} className="border-b border-gray-800 hover:bg-gray-800/50">
+                    <td className="p-4 text-gray-300">{index + 1}</td>
+                    <td className="p-4 text-gray-300 whitespace-nowrap">{tx.timestamp}</td>
+                    <td className="p-4 text-gray-300">{tx.amount_xrp > 0 ? tx.amount_xrp : tx.amount_pft}</td>
+                    <td className="p-4 text-gray-300">
+                      {tx.amount_xrp > 0 ? 'XRP' : (tx.amount_pft > 0 ? 'PFT' : '')}
+                    </td>
+                    <td className="p-4 text-gray-300">
+                      {tx.from_address === address ? 'To' : 'From'}
+                    </td>
+                    <td className="p-4 text-gray-300 font-mono">
+                      {tx.from_address === address ? tx.to_address : tx.from_address}
+                    </td>
+                    <td className="p-4 text-gray-300 font-mono">{tx.hash}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

@@ -2,7 +2,6 @@ from typing import Dict, Any, Optional, List
 from xrpl.models.transactions import Payment, Memo, TrustSet
 import binascii
 from xrpl.models.amounts import IssuedCurrencyAmount
-from . import some_constants  # if needed for REMEMBRANCER_ADDRESS, etc.
 import asyncio
 import base64
 import brotli

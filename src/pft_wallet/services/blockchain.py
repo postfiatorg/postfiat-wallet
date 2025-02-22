@@ -3,12 +3,14 @@ from xrpl.asyncio.clients import AsyncJsonRpcClient
 from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
-from xrpl.core.keypairs import derive_classic_address, ED25519
+from xrpl.core.keypairs import derive_classic_address, ed25519
 from xrpl.models.transactions import Payment, TrustSet
 from xrpl.transaction import sign_and_submit
 from xrpl.core import addresscodec
 import logging
 import asyncio
+import nacl.bindings
+from xrpl.core.keypairs.ed25519 import ED25519
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +42,18 @@ class BlockchainService:
 
     async def get_xrp_balance(self, account: str) -> float:
         """Get XRP balance for the given account"""
-        request = AccountInfo(
-            account=account,
-            ledger_index="validated"
-        )
-        response = await self.client.request(request)
-        balance_drops = response.result["account_data"]["Balance"]
-        return drops_to_xrp(balance_drops)
+        try:
+            request = AccountInfo(
+                account=account,
+                ledger_index="validated"
+            )
+            response = await self.client.request(request)
+            balance_drops = response.result["account_data"]["Balance"]
+            return drops_to_xrp(balance_drops)
+        except Exception as e:
+            # Account not found or other error - return 0 for new/unactivated accounts
+            logger.debug(f"Account {account} not found or not activated yet: {str(e)}")
+            return 0.0
 
     async def get_pft_balance(self, account: str) -> float:
         """Get PFT token balance for the given account"""
@@ -91,13 +98,12 @@ class BlockchainService:
         try:
             logger.info(f"Fetching summary for account: {account}")
             xrp_balance = await self.get_xrp_balance(account)
-            logger.info(f"XRP balance: {xrp_balance}")
             pft_balance = await self.get_pft_balance(account)
-            logger.info(f"PFT balance: {pft_balance}")
-
+            
             summary = {
-                "xrp_balance": xrp_balance,
-                "pft_balance": pft_balance
+                "xrp_balance": float(xrp_balance),
+                "pft_balance": float(pft_balance),
+                "account_status": "unactivated" if xrp_balance == 0 else "active"
             }
             logger.info(f"Returning summary: {summary}")
             return summary
@@ -199,27 +205,90 @@ class BlockchainService:
             logger.error(f"Error in sign_and_send_trust_set: {str(e)}")
             raise
 
+    @staticmethod
+    def _get_raw_entropy(wallet_seed: str) -> bytes:
+        """Returns the raw entropy bytes from the specified wallet secret"""
+        decoded_seed = addresscodec.decode_seed(wallet_seed)
+        return decoded_seed[0]
+
     def get_ecdh_public_key_from_seed(self, wallet_seed: str) -> str:
         """
-        Derive an Ed25519-based ECDH public key (hex) from a wallet seed.
+        Get ECDH public key directly from a wallet seed
         
         Args:
-            wallet_seed: The wallet seed (secret key)
+            wallet_seed: The wallet seed to derive the key from
             
         Returns:
-            str: The ED25519 public key in hex format
+            str: The ECDH public key in hex format
             
         Raises:
-            ValueError: If the seed is invalid or key derivation fails
+            ValueError: If wallet_seed is invalid
         """
         try:
-            # Decode seed to raw entropy bytes
-            seed_bytes, _ = addresscodec.decode_seed(wallet_seed)
-            
-            # Derive ED25519 keypair using XRPL method
-            pub_hex, _ = ED25519.derive_keypair(seed_bytes, is_validator=False)
-            
-            return pub_hex
+            raw_entropy = self._get_raw_entropy(wallet_seed)
+            public_key, _ = ED25519.derive_keypair(raw_entropy, is_validator=False)
+            return public_key
         except Exception as e:
-            logger.error(f"Error deriving ECDH public key: {str(e)}")
-            raise ValueError(f"Failed to derive ECDH public key: {str(e)}")
+            logger.error(f"Failed to derive ECDH public key: {e}")
+            raise ValueError(f"Failed to derive ECDH public key: {e}") from e
+
+    def get_shared_secret(self, received_public_key: str, channel_private_key: str) -> bytes:
+        """
+        Derive a shared secret using ECDH
+        
+        Args:
+            received_public_key: public key received from another party
+            channel_private_key: Seed for the wallet to derive the shared secret
+
+        Returns:
+            bytes: The derived shared secret
+
+        Raises:
+            ValueError: if received_public_key is invalid or channel_private_key is invalid
+        """
+        try:
+            raw_entropy = self._get_raw_entropy(channel_private_key)
+            return self._derive_shared_secret(public_key_hex=received_public_key, seed_bytes=raw_entropy)
+        except Exception as e:
+            logger.error(f"Failed to derive shared secret: {e}")
+            raise ValueError(f"Failed to derive shared secret: {e}") from e
+
+    @staticmethod
+    def _derive_shared_secret(public_key_hex: str, seed_bytes: bytes) -> bytes:
+        """
+        Derive a shared secret using ECDH
+        Args:
+            public_key_hex: their public key in hex
+            seed_bytes: original entropy/seed bytes (required for ED25519)
+        Returns:
+            bytes: The shared secret
+        """
+        # First derive the ED25519 keypair using XRPL's method
+        public_key_raw, private_key_raw = ED25519.derive_keypair(seed_bytes, is_validator=False)
+        
+        # Convert private key to bytes and remove ED prefix
+        private_key_bytes = bytes.fromhex(private_key_raw)
+        if len(private_key_bytes) == 33 and private_key_bytes[0] == 0xED:
+            private_key_bytes = private_key_bytes[1:]  # Remove the ED prefix
+        
+        # Convert public key to bytes and remove ED prefix
+        public_key_self_bytes = bytes.fromhex(public_key_raw)
+        if len(public_key_self_bytes) == 33 and public_key_self_bytes[0] == 0xED:
+            public_key_self_bytes = public_key_self_bytes[1:]  # Remove the ED prefix
+        
+        # Combine private and public key for NaCl format (64 bytes)
+        private_key_combined = private_key_bytes + public_key_self_bytes
+        
+        # Convert their public key
+        public_key_bytes = bytes.fromhex(public_key_hex)
+        if len(public_key_bytes) == 33 and public_key_bytes[0] == 0xED:
+            public_key_bytes = public_key_bytes[1:]  # Remove the ED prefix
+        
+        # Convert ED25519 keys to Curve25519
+        private_curve = nacl.bindings.crypto_sign_ed25519_sk_to_curve25519(private_key_combined)
+        public_curve = nacl.bindings.crypto_sign_ed25519_pk_to_curve25519(public_key_bytes)
+        
+        # Use raw X25519 function
+        shared_secret = nacl.bindings.crypto_scalarmult(private_curve, public_curve)
+
+        return shared_secret

@@ -10,8 +10,10 @@ from enum import Enum
 from postfiat.nodes.task.state import TaskStatus
 from typing import Optional, Dict, Any
 from pft_wallet.services.transaction import TransactionBuilder
-from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
 from xrpl.models.transactions import TrustSet
+
+# Define the remembrancer address
+REMEMBRANCER_ADDRESS = "rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn"
 
 app = FastAPI()
 
@@ -92,18 +94,40 @@ class ECDHRequest(BaseModel):
     account: str
     password: str
 
+class PFLogRequest(BaseModel):
+    """
+    Request model for sending an encrypted/compressed/chunked PF log
+    """
+    account: str
+    password: str
+    log_message: str
+    log_id: str
+    username: str
+    remote_ed_pubkey: str
+    use_pft: bool = True
+
 @router.get("/health")
 def health_check():
     return {"status": "ok"}
 
 @router.get("/balance/{account}")
 async def get_balance(account: str):
-    xrp_balance = await blockchain.get_xrp_balance(account)
-    pft_balance = await blockchain.get_pft_balance(account)
-    return {
-        "xrp": xrp_balance,
-        "pft": pft_balance
-    }
+    try:
+        xrp_balance = await blockchain.get_xrp_balance(account)
+        pft_balance = await blockchain.get_pft_balance(account)
+        return {
+            "xrp": str(xrp_balance),  # Convert to string for consistent API response
+            "pft": str(pft_balance),
+            "status": "unactivated" if xrp_balance == 0 else "active"
+        }
+    except Exception as e:
+        logger.error(f"Error getting balance for {account}: {str(e)}")
+        # Return zeros instead of throwing an error for unactivated accounts
+        return {
+            "xrp": "0",
+            "pft": "0",
+            "status": "unactivated"
+        }
 
 @router.post("/auth/signin")
 async def signin(auth: WalletAuth):
@@ -277,12 +301,16 @@ async def get_account_summary(account: str):
     Get a summary of account information including XRP and PFT balances.
     """
     try:
-        # Since blockchain.get_account_summary is already async, we just await it
         summary = await blockchain.get_account_summary(account)
         return summary
     except Exception as e:
         logger.error(f"Error getting account summary for {account}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return a default summary for unactivated accounts
+        return {
+            "xrp_balance": "0",
+            "pft_balance": "0",
+            "account_status": "unactivated"
+        }
 
 @router.post("/tasks/clear-state/{account}")
 async def clear_task_state(account: str):
@@ -524,6 +552,49 @@ async def get_ecdh_key(req: ECDHRequest):
         raise HTTPException(status_code=404, detail="Wallet not found")
     except Exception as e:
         logger.error(f"Unexpected error getting ECDH key for {req.account}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/transaction/pf_log")
+async def send_pf_log_chunked(req: PFLogRequest):
+    """
+    Send a PF log that is encrypted, compressed, and chunked (if necessary),
+    using the build_pf_log_chunked_transactions method in transaction.py.
+    Then each chunked transaction is signed and submitted via blockchain.py.
+    """
+    try:
+        # 1) Retrieve and decrypt the user's seed
+        wallet_info = storage.get_wallet(req.account)
+        seed = storage.decrypt_private_key(wallet_info["encrypted_key"], req.password)
+
+        # 2) Build all chunked transaction dictionaries
+        tx_dicts = transaction_builder.build_pf_log_chunked_transactions(
+            account=req.account,
+            log_message=req.log_message,
+            log_id=req.log_id,
+            username=req.username,
+            remembrancer_address=REMEMBRANCER_ADDRESS,
+            local_seed=seed,
+            remote_ed_pubkey=req.remote_ed_pubkey,
+            use_pft=req.use_pft
+        )
+
+        # 3) Sign & send each transaction
+        results = []
+        for unsigned_tx in tx_dicts:
+            result = await blockchain.sign_and_send_transaction(unsigned_tx, seed)
+            results.append(result)
+
+        return {
+            "status": "success",
+            "transactions_submitted": len(results),
+            "results": results
+        }
+
+    except ValueError as e:
+        logger.error(f"Invalid PF Log request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error sending PF Log transaction: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api

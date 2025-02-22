@@ -4,6 +4,13 @@ import { AuthContext } from '../context/AuthContext';
 
 import FinalVerificationModal from './modals/FinalVerificationModal';
 import RefuseTaskModal from './modals/RefuseTaskModal';
+import LogPomodoroModal from './modals/LogPomodoroModal';
+
+// Add this interface near the top of the file
+interface MessageHistoryItem {
+  direction: string;
+  data: string;
+}
 
 const VerificationPage = () => {
   const { isAuthenticated, address } = useContext(AuthContext);
@@ -15,6 +22,8 @@ const VerificationPage = () => {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showRefuseModal, setShowRefuseModal] = useState(false);
   const [verificationDetails, setVerificationDetails] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showLogModal, setShowLogModal] = useState(false);
 
   // Fetch tasks from the API
   const fetchTasks = async () => {
@@ -23,8 +32,14 @@ const VerificationPage = () => {
       return;
     }
 
+    setIsRefreshing(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
+      // Add artificial delay for better UX
+      const [response] = await Promise.all([
+        fetch(`http://localhost:8000/api/tasks/${address}`),
+        new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
+      ]);
+      
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Failed to fetch tasks: ${text}`);
@@ -41,12 +56,13 @@ const VerificationPage = () => {
         return new Date(isoTimestamp).getTime();
       };
 
-      tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+      tasksToDisplay.sort((a: any, b: any) => parseTimestamp(b.id) - parseTimestamp(a.id));
       setTasks(tasksToDisplay);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -79,6 +95,12 @@ const VerificationPage = () => {
 
   const handleRefuseTask = (taskId: string, reason: string) => {
     // Refresh tasks after refusal
+    fetchTasks();
+  };
+
+  const handleLogSubmit = async (details: string) => {
+    setVerificationDetails(''); // Clear the input after submission
+    // Optionally refresh tasks or show success message
     fetchTasks();
   };
 
@@ -134,13 +156,42 @@ const VerificationPage = () => {
               </button>
             </div>
             <div className="space-y-3">
-              <button className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                              text-white rounded-lg transition-colors text-sm font-medium">
+              <button 
+                onClick={() => setShowLogModal(true)}
+                className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
+                          text-white rounded-lg transition-colors text-sm font-medium">
                 Log Pomodoro
               </button>
-              <button className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                              text-white rounded-lg transition-colors text-sm font-medium">
-                Force Update
+              <button 
+                onClick={() => fetchTasks()}
+                disabled={isRefreshing}
+                className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
+                          text-white rounded-lg transition-all duration-200 text-sm font-medium
+                          disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isRefreshing ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle 
+                        className="opacity-25" 
+                        cx="12" 
+                        cy="12" 
+                        r="10" 
+                        stroke="currentColor" 
+                        strokeWidth="4"
+                        fill="none"
+                      />
+                      <path 
+                        className="opacity-75" 
+                        fill="currentColor" 
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    <span>Updating...</span>
+                  </>
+                ) : (
+                  'Force Update'
+                )}
               </button>
             </div>
           </div>
@@ -202,7 +253,7 @@ const VerificationPage = () => {
                         <div className="mt-4 pt-4 border-t border-slate-700">
                           <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
                           <div className="space-y-3">
-                            {task.message_history.map((msg, idx) => (
+                            {task.message_history.map((msg: MessageHistoryItem, idx: number) => (
                               <div key={idx} className="text-sm">
                                 <span className="text-slate-400 font-medium">
                                   {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
@@ -242,6 +293,13 @@ const VerificationPage = () => {
           setVerificationDetails(''); // Clear the input after submission
         }}
         initialReason={verificationDetails}
+      />
+
+      <LogPomodoroModal
+        isOpen={showLogModal}
+        onClose={() => setShowLogModal(false)}
+        onSubmit={handleLogSubmit}
+        initialDetails={verificationDetails}
       />
     </div>
   );

@@ -15,7 +15,6 @@ export default function Navbar({ username, onSignOut, activePage, onPageChange }
     { label: 'Rewards', id: 'rewards' },
     { label: 'Payments', id: 'payments' },
     { label: 'Memos', id: 'memos' },
-    { label: 'Log', id: 'log' },
   ];
 
   return (

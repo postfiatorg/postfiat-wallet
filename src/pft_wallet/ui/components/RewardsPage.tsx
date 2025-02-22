@@ -3,6 +3,18 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../context/AuthContext';
 
+interface MessageHistoryItem {
+  direction: string;
+  data: string;
+}
+
+interface RewardTask {
+  id: string;
+  message_history: MessageHistoryItem[];
+  pft_rewarded?: number;
+  pft_offered?: number;
+}
+
 const RewardsPage = () => {
   const { isAuthenticated, address } = useContext(AuthContext);
   const [rewards, setRewards] = useState<any[]>([]);
@@ -34,7 +46,7 @@ const RewardsPage = () => {
         return new Date(isoTimestamp).getTime();
       };
 
-      rewardedTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+      rewardedTasks.sort((a: RewardTask, b: RewardTask) => parseTimestamp(b.id) - parseTimestamp(a.id));
       setRewards(rewardedTasks);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -125,12 +137,6 @@ const RewardsPage = () => {
           </div>
         </div>
       )}
-
-      {/* Footer Status */}
-      <div className="fixed bottom-0 left-0 right-0 flex justify-between p-2 bg-gray-800 text-gray-400 text-sm">
-        <span>Wallet state: idle</span>
-        <span>IDLE</span>
-      </div>
     </div>
   );
 };

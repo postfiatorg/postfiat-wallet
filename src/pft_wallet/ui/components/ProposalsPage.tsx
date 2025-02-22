@@ -8,6 +8,12 @@ import { RequestTaskModal } from './modals/RequestTaskModal';
 import RefuseTaskModal from './modals/RefuseTaskModal';
 import SubmitVerificationModal from './modals/SubmitVerificationModal';
 
+// Add interface near top of file
+interface MessageHistoryItem {
+  direction: string;
+  data: string;
+}
+
 const ProposalsPage = () => {
   const { isAuthenticated, address, username, password } = useContext(AuthContext);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -171,244 +177,328 @@ const ProposalsPage = () => {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      {!isAuthenticated && (
-        <div className="text-white">Please sign in to view tasks.</div>
-      )}
-      {isAuthenticated && !address && (
-        <div className="text-white">No wallet address found.</div>
-      )}
-      {loading && <div className="text-white">Loading tasks...</div>}
-      {error && <div className="text-red-500">Error: {error}</div>}
-      {isAuthenticated && address && !loading && (
-        <>
-          {/* Error Message */}
-          {modalError && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
-              <p className="text-red-400 text-sm">{modalError}</p>
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        {/* Skeleton for Task Actions Card */}
+        <Card className="bg-slate-900 border-slate-800">
+          <CardHeader>
+            <div className="h-6 w-32 bg-slate-700 rounded animate-pulse"></div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Task ID Input Skeleton */}
+            <div className="space-y-2">
+              <div className="h-4 w-16 bg-slate-700 rounded animate-pulse"></div>
+              <div className="h-10 w-full bg-slate-800 rounded-lg animate-pulse"></div>
             </div>
-          )}
 
-          {/* Input Section */}
-          <Card className="bg-slate-900 border-slate-800">
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold text-white">Task Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Task ID Input */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-400">Task ID</label>
-                <input
-                  type="text"
-                  value={selectedTaskId}
-                  onChange={(e) => setSelectedTaskId(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg 
-                            text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
-                            focus:ring-emerald-500/50 focus:border-emerald-500/50"
-                  placeholder="Enter task ID"
-                />
+            {/* Task Details Skeleton */}
+            <div className="space-y-2">
+              <div className="h-4 w-24 bg-slate-700 rounded animate-pulse"></div>
+              <div className="h-[200px] w-full bg-slate-800 rounded-lg animate-pulse"></div>
+            </div>
+
+            {/* Action Buttons Skeleton */}
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-10 w-full bg-slate-700 rounded-lg animate-pulse"></div>
+                ))}
               </div>
-
-              {/* Task Details */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-400">Task Details</label>
-                <textarea
-                  value={taskDetails}
-                  onChange={(e) => setTaskDetails(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
-                            text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
-                            focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
-                  placeholder="Enter task details"
-                />
+              <div className="space-y-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-10 w-full bg-slate-700 rounded-lg animate-pulse"></div>
+                ))}
               </div>
+            </div>
+          </CardContent>
+        </Card>
 
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <button 
-                    onClick={() => handleModalOpen('request')}
-                    className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
-                             text-white rounded-lg transition-colors text-sm font-medium"
-                  >
-                    Request Task
-                  </button>
-                  <button 
-                    onClick={() => handleModalOpen('refuse')}
-                    className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                             text-white rounded-lg transition-colors text-sm font-medium"
-                  >
-                    Refuse Task
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <button 
-                    onClick={() => handleModalOpen('accept')}
-                    className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
-                             text-white rounded-lg transition-colors text-sm font-medium"
-                  >
-                    Accept Task
-                  </button>
-                  <button 
-                    onClick={() => handleModalOpen('verify')}
-                    className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                             text-white rounded-lg transition-colors text-sm font-medium"
-                  >
-                    Submit for Verification
-                  </button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Filter Controls */}
-          <div className="flex justify-end">
-            <label className="flex items-center gap-2 text-sm text-slate-400">
-              <input
-                type="checkbox"
-                checked={showRefused}
-                onChange={(e) => setShowRefused(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500"
-              />
-              Show Refused Tasks
-            </label>
-          </div>
-
-          {/* Tasks List */}
-          <Card className="bg-slate-900 border-slate-800">
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold text-white">Tasks</CardTitle>
-            </CardHeader>
-            <CardContent className="max-h-[600px] overflow-y-auto">
-              {tasks.length === 0 ? (
-                <div className="text-slate-500">No tasks available.</div>
-              ) : (
+        {/* Skeleton for Tasks List */}
+        <Card className="bg-slate-900 border-slate-800">
+          <CardHeader>
+            <div className="h-6 w-24 bg-slate-700 rounded animate-pulse"></div>
+          </CardHeader>
+          <CardContent className="max-h-[600px] overflow-y-auto space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="p-4 rounded-lg bg-slate-800/50">
                 <div className="space-y-4">
-                  {tasks.map((task) => {
-                    const tsStr = task.id.split('__')[0];
-                    const displayTs = tsStr.replace('_', ' ');
+                  {/* Task Header Skeleton */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-4 w-48 bg-slate-700 rounded animate-pulse"></div>
+                      <div className="h-4 w-20 bg-emerald-500/20 rounded-full animate-pulse"></div>
+                    </div>
+                    <div className="h-6 w-24 bg-slate-700 rounded-full animate-pulse"></div>
+                  </div>
 
-                    // Determine which message to show based on status
-                    let mainMessage = "No message available";
-                    if (task.message_history?.length > 0) {
-                      if (task.status === 'accepted' && task.message_history.length >= 3) {
-                        mainMessage = task.message_history[2].data;
-                      } else if (task.status === 'proposed' && task.message_history.length >= 2) {
-                        mainMessage = task.message_history[1].data;
-                      } else {
-                        mainMessage = task.message_history[0].data;
-                      }
-                    }
-
-                    return (
-                      <div 
-                        key={task.id} 
-                        className="p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors cursor-pointer"
-                        onClick={() => handleTaskClick(task.id)}
-                      >
-                        <div className="space-y-4">
-                          {/* Header with ID and Status */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs font-mono text-slate-500">{task.id}</span>
-                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                task.status === 'accepted'
-                                  ? 'bg-emerald-500/10 text-emerald-400'
-                                  : task.status === 'requested'
-                                  ? 'bg-yellow-500/10 text-yellow-400'
-                                  : task.status === 'proposed'
-                                  ? 'bg-blue-500/10 text-blue-400'
-                                  : 'bg-red-500/10 text-red-400'
-                              }`}>
-                                {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
-                              </span>
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleTaskExpansion(task.id);
-                              }}
-                              className="px-3 py-1 text-xs font-medium text-slate-400 hover:text-white 
-                                       bg-slate-700/50 hover:bg-slate-700 rounded-full transition-colors"
-                            >
-                              {expandedTasks.has(task.id) ? 'Hide Messages' : 'Show Messages'}
-                            </button>
-                          </div>
-
-                          {/* Main Message */}
-                          <div>
-                            <p className="text-sm text-slate-300">{mainMessage}</p>
-                            <p className="text-xs text-slate-500 mt-2">{displayTs}</p>
-                          </div>
-                          
-                          {/* Message History Expansion */}
-                          {expandedTasks.has(task.id) && task.message_history && (
-                            <div className="mt-4 pt-4 border-t border-slate-700">
-                              <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
-                              <div className="space-y-3">
-                                {task.message_history.map((msg, idx) => (
-                                  <div key={idx} className="text-sm">
-                                    <span className="text-slate-400 font-medium">
-                                      {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
-                                    </span>
-                                    <p className="text-slate-300 mt-1 pl-4">{msg.data}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {/* Task Content Skeleton */}
+                  <div className="space-y-2">
+                    <div className="h-4 w-3/4 bg-slate-700 rounded animate-pulse"></div>
+                    <div className="h-4 w-1/2 bg-slate-700 rounded animate-pulse"></div>
+                    <div className="h-3 w-32 bg-slate-700 rounded animate-pulse mt-4"></div>
+                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-          {/* Modals */}
-          <AcceptTaskModal
-            isOpen={modalState.accept}
-            onClose={() => handleModalClose('accept')}
-            taskId={selectedTaskId}
-            onAccept={(taskId, message) => {
-              handleAcceptTask(taskId, message);
-              setTaskDetails('');
-            }}
-            initialMessage={taskDetails}
-          />
-          <RequestTaskModal
-            isOpen={modalState.request}
-            onClose={() => handleModalClose('request')}
-            onRequest={(message) => {
-              handleRequestTask(message);
-              setTaskDetails('');
-            }}
-            initialMessage={taskDetails}
-          />
-          <RefuseTaskModal
-            isOpen={modalState.refuse}
-            onClose={() => handleModalClose('refuse')}
-            taskId={selectedTaskId}
-            onRefuse={(taskId, reason) => {
-              handleRefuseTask(taskId, reason);
-              setTaskDetails('');
-            }}
-            initialReason={taskDetails}
-          />
-          <SubmitVerificationModal
-            isOpen={modalState.verify}
-            onClose={() => handleModalClose('verify')}
-            taskId={selectedTaskId}
-            onSubmit={(taskId, details) => {
-              handleSubmitVerification(taskId, details);
-              setTaskDetails('');
-            }}
-            initialDetails={taskDetails}
-          />
-        </>
-      )}
-    </div>
+  // Add this CSS at the top of your file or in your global styles
+  const styles = `
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    .animate-fade-in {
+      animation: fade-in 0.5s ease-out;
+    }
+  `;
+
+  return (
+    <>
+      <style>{styles}</style>
+      <div className="space-y-6">
+        {!isAuthenticated && (
+          <div className="text-white">Please sign in to view tasks.</div>
+        )}
+        {isAuthenticated && !address && (
+          <div className="text-white">No wallet address found.</div>
+        )}
+        {error && <div className="text-red-500">Error: {error}</div>}
+        {isAuthenticated && address && !loading && (
+          <>
+            {/* Error Message */}
+            {modalError && (
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
+                <p className="text-red-400 text-sm">{modalError}</p>
+              </div>
+            )}
+
+            {/* Input Section */}
+            <Card className="bg-slate-900 border-slate-800">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-white">Task Actions</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Task ID Input */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-400">Task ID</label>
+                  <input
+                    type="text"
+                    value={selectedTaskId}
+                    onChange={(e) => setSelectedTaskId(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg 
+                              text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
+                              focus:ring-emerald-500/50 focus:border-emerald-500/50"
+                    placeholder="Enter task ID"
+                  />
+                </div>
+
+                {/* Task Details */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-400">Task Details</label>
+                  <textarea
+                    value={taskDetails}
+                    onChange={(e) => setTaskDetails(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
+                              text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
+                              focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
+                    placeholder="Enter task details"
+                  />
+                </div>
+
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => handleModalOpen('request')}
+                      className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
+                               text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      Request Task
+                    </button>
+                    <button 
+                      onClick={() => handleModalOpen('refuse')}
+                      className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
+                               text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      Refuse Task
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => handleModalOpen('accept')}
+                      className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
+                               text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      Accept Task
+                    </button>
+                    <button 
+                      onClick={() => handleModalOpen('verify')}
+                      className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
+                               text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      Submit for Verification
+                    </button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Filter Controls */}
+            <div className="flex justify-end">
+              <label className="flex items-center gap-2 text-sm text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={showRefused}
+                  onChange={(e) => setShowRefused(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500"
+                />
+                Show Refused Tasks
+              </label>
+            </div>
+
+            {/* Tasks List */}
+            <Card className="bg-slate-900 border-slate-800">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-white">Tasks</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[600px] overflow-y-auto">
+                {tasks.length === 0 ? (
+                  <div className="text-slate-500">No tasks available.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {tasks.map((task) => {
+                      const tsStr = task.id.split('__')[0];
+                      const displayTs = tsStr.replace('_', ' ');
+
+                      // Determine which message to show based on status
+                      let mainMessage = "No message available";
+                      if (task.message_history?.length > 0) {
+                        if (task.status === 'accepted' && task.message_history.length >= 3) {
+                          mainMessage = task.message_history[2].data;
+                        } else if (task.status === 'proposed' && task.message_history.length >= 2) {
+                          mainMessage = task.message_history[1].data;
+                        } else {
+                          mainMessage = task.message_history[0].data;
+                        }
+                      }
+
+                      return (
+                        <div 
+                          key={task.id} 
+                          className="p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors cursor-pointer"
+                          onClick={() => handleTaskClick(task.id)}
+                        >
+                          <div className="space-y-4">
+                            {/* Header with ID and Status */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs font-mono text-slate-500">{task.id}</span>
+                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                  task.status === 'accepted'
+                                    ? 'bg-emerald-500/10 text-emerald-400'
+                                    : task.status === 'requested'
+                                    ? 'bg-yellow-500/10 text-yellow-400'
+                                    : task.status === 'proposed'
+                                    ? 'bg-blue-500/10 text-blue-400'
+                                    : 'bg-red-500/10 text-red-400'
+                                }`}>
+                                  {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
+                                </span>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleTaskExpansion(task.id);
+                                }}
+                                className="px-3 py-1 text-xs font-medium text-slate-400 hover:text-white 
+                                         bg-slate-700/50 hover:bg-slate-700 rounded-full transition-colors"
+                              >
+                                {expandedTasks.has(task.id) ? 'Hide Messages' : 'Show Messages'}
+                              </button>
+                            </div>
+
+                            {/* Main Message */}
+                            <div>
+                              <p className="text-sm text-slate-300">{mainMessage}</p>
+                              <p className="text-xs text-slate-500 mt-2">{displayTs}</p>
+                            </div>
+                            
+                            {/* Message History Expansion */}
+                            {expandedTasks.has(task.id) && task.message_history && (
+                              <div className="mt-4 pt-4 border-t border-slate-700">
+                                <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
+                                <div className="space-y-3">
+                                  {task.message_history.map((msg: MessageHistoryItem, idx: number) => (
+                                    <div key={idx} className="text-sm">
+                                      <span className="text-slate-400 font-medium">
+                                        {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
+                                      </span>
+                                      <p className="text-slate-300 mt-1 pl-4">{msg.data}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Modals */}
+            <AcceptTaskModal
+              isOpen={modalState.accept}
+              onClose={() => handleModalClose('accept')}
+              taskId={selectedTaskId}
+              onAccept={(taskId, message) => {
+                handleAcceptTask(taskId, message);
+                setTaskDetails('');
+              }}
+              initialMessage={taskDetails}
+            />
+            <RequestTaskModal
+              isOpen={modalState.request}
+              onClose={() => handleModalClose('request')}
+              onRequest={(message) => {
+                handleRequestTask(message);
+                setTaskDetails('');
+              }}
+              initialMessage={taskDetails}
+            />
+            <RefuseTaskModal
+              isOpen={modalState.refuse}
+              onClose={() => handleModalClose('refuse')}
+              taskId={selectedTaskId}
+              onRefuse={(taskId, reason) => {
+                handleRefuseTask(taskId, reason);
+                setTaskDetails('');
+              }}
+              initialReason={taskDetails}
+            />
+            <SubmitVerificationModal
+              isOpen={modalState.verify}
+              onClose={() => handleModalClose('verify')}
+              taskId={selectedTaskId}
+              onSubmit={(taskId, details) => {
+                handleSubmitVerification(taskId, details);
+                setTaskDetails('');
+              }}
+              initialDetails={taskDetails}
+            />
+          </>
+        )}
+      </div>
+    </>
   );
 };
 

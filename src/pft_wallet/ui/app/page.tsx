@@ -11,6 +11,7 @@ import Navbar from '@/components/navbar';
 import { AuthState } from '@/types/auth';
 import { AuthProvider } from '@/context/AuthContext';
 import Onboarding from '@/components/Onboarding';
+import MemosPage from '@/components/MemosPage';
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
   const [auth, setAuth] = useState<AuthState>({
@@ -20,6 +21,7 @@ export default function Home() {
     password: null
   });
   const [initStatus, setInitStatus] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     // Check if we have a stored wallet address
@@ -35,6 +37,32 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    const checkInitStatus = async () => {
+      if (!auth.address) return;
+      
+      try {
+        console.log('Checking init status for address:', auth.address);
+        const response = await fetch(`http://localhost:8000/api/account/${auth.address}/status`);
+        console.log('Raw response:', response);
+        const data = await response.json();
+        console.log('Initiation status response:', data);
+        setInitStatus(data.init_rite_status || 'UNSTARTED');
+      } catch (error) {
+        console.error('Error checking initialization status:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (auth.isAuthenticated) {
+      checkInitStatus();
+      // Set up periodic checking
+      const intervalId = setInterval(checkInitStatus, 10000);
+      return () => clearInterval(intervalId);
+    }
+  }, [auth.isAuthenticated, auth.address]);
+
   const handleAuth = (address: string, username: string, password: string) => {
     setAuth({
       isAuthenticated: true,
@@ -47,7 +75,7 @@ export default function Home() {
     // Note: We intentionally don't store password in localStorage for security
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setAuth({
       isAuthenticated: false,
       address: null,
@@ -66,9 +94,23 @@ export default function Home() {
     return <AuthPage onAuth={handleAuth} />;
   }
 
-  // Show onboarding UI if not fully initialized
-  if (initStatus && initStatus !== 'COMPLETE') {
-    return <Onboarding initStatus={initStatus} address={auth.address!} />;
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  // Show onboarding UI if not initiated or status is pending
+  if (initStatus && ['UNSTARTED', 'PENDING_INITIATION', 'PENDING'].includes(initStatus)) {
+    return (
+      <AuthProvider value={auth} onClearAuth={handleSignOut}>
+        <Onboarding 
+          initStatus={initStatus} 
+          address={auth.address!} 
+          onCheckStatus={(data) => {
+            setInitStatus(data.init_rite_status);
+          }}
+        />
+      </AuthProvider>
+    );
   }
 
   const renderPage = () => {
@@ -82,9 +124,7 @@ export default function Home() {
       case 'payments':
         return <PaymentsPage />;
       case 'memos':
-        return <div>Memos Page</div>;
-      case 'log':
-        return <div>Log Page</div>;
+        return <MemosPage address={auth.address!} />;
       case 'summary':
       default:
         return <SummaryPage />;
@@ -92,7 +132,7 @@ export default function Home() {
   };
 
   return (
-    <AuthProvider value={auth}>
+    <AuthProvider value={auth} onClearAuth={handleSignOut}>
       <div className="min-h-screen bg-slate-950">
         <Navbar 
           username={auth.username} 
