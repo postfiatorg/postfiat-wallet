@@ -2,7 +2,7 @@ import json
 import datetime
 from pathlib import Path
 from typing import Iterator, List, Dict, Any
-from pft_wallet.config import settings
+from postfiat_wallet.config import settings
 from cryptography.fernet import Fernet
 from base64 import b64encode, b64decode
 import hashlib

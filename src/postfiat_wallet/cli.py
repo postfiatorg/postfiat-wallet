@@ -3,7 +3,7 @@ import sys
 import click
 import uvicorn
 import requests
-import pkg_resources
+import importlib.metadata
 from packaging import version
 from pathlib import Path
 import logging
@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 def check_package_updates():
     """Check PyPI for newer package versions"""
     try:
-        current = pkg_resources.get_distribution('pft-wallet').version
-        pypi_response = requests.get('https://pypi.org/pypi/pft-wallet/json', timeout=2)
+        current = importlib.metadata.version('postfiat-wallet')
+        pypi_response = requests.get('https://pypi.org/pypi/postfiat-wallet/json', timeout=2)
         latest = version.parse(pypi_response.json()['info']['version'])
         
         if version.parse(current) < latest:
-            click.echo(f"New version {latest} available. Run 'pip install --upgrade pft-wallet' to update.")
+            click.echo(f"New version {latest} available. Run 'pip install --upgrade postfiat-wallet' to update.")
             return True
     except Exception as e:
         logger.debug(f"Failed to check for package updates: {e}")
@@ -38,7 +38,7 @@ def ensure_data_dir():
 @click.group()
 @click.option('--debug/--no-debug', default=False, help='Enable debug logging')
 def cli(debug):
-    """PFT Wallet - Local wallet interface"""
+    """Post Fiat Wallet - Local wallet interface"""
     log_level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(level=log_level)
 
@@ -48,11 +48,11 @@ def cli(debug):
 @click.option('--no-updates', is_flag=True, help='Skip update checks')
 @click.option('--dev', is_flag=True, help='Run in development mode')
 def start(port, no_browser, no_updates, dev):
-    """Start the PFT Wallet interface"""
+    """Start the Post Fiat Wallet interface"""
     if dev:
-        os.environ["PFT_DEV"] = "1"
+        os.environ["POSTFIAT_DEV"] = "1"
         click.echo("Running in development mode")
-        click.echo("Start the Next.js dev server with: cd src/pft_wallet/ui && npm run dev")
+        click.echo("Start the Next.js dev server with: cd src/postfiat_wallet/ui && npm run dev")
         
     # Use configured port if none specified
     if port is None:

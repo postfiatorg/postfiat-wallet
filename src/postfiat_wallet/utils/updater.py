@@ -1,15 +1,14 @@
-# src/pft_wallet/utils/updater.py
+# src/postfiat_wallet/utils/updater.py
 import boto3
 import json
-import os
 from pathlib import Path
-import pkg_resources
+from importlib import resources
 from ..config import settings
 
 class UIUpdater:
     def __init__(self):
         self.s3 = boto3.client('s3')
-        self.static_dir = Path(pkg_resources.resource_filename('pft_wallet', 'static'))
+        self.static_dir = Path(resources.files('postfiat_wallet').joinpath('static'))
         self.temp_dir = Path(settings.PATHS["cache_dir"]) / 'ui_updates'
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
