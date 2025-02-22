@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 def check_package_updates():
     """Check PyPI for newer package versions"""
     try:
-        current = pkg_resources.get_distribution('pft-wallet').version
-        pypi_response = requests.get('https://pypi.org/pypi/pft-wallet/json', timeout=2)
+        current = pkg_resources.get_distribution('postfiat-wallet').version
+        pypi_response = requests.get('https://pypi.org/pypi/postfiat-wallet/json', timeout=2)
         latest = version.parse(pypi_response.json()['info']['version'])
         
         if version.parse(current) < latest:
-            click.echo(f"New version {latest} available. Run 'pip install --upgrade pft-wallet' to update.")
+            click.echo(f"New version {latest} available. Run 'pip install --upgrade postfiat-wallet' to update.")
             return True
     except Exception as e:
         logger.debug(f"Failed to check for package updates: {e}")
@@ -50,7 +50,7 @@ def cli(debug):
 def start(port, no_browser, no_updates, dev):
     """Start the PFT Wallet interface"""
     if dev:
-        os.environ["PFT_DEV"] = "1"
+        os.environ["POSTFIAT_DEV"] = "1"
         click.echo("Running in development mode")
         click.echo("Start the Next.js dev server with: cd src/pft_wallet/ui && npm run dev")
         
@@ -60,7 +60,7 @@ def start(port, no_browser, no_updates, dev):
 
     # Create and configure FastAPI app
     app = create_app()
-    
+
     # Launch browser unless disabled
     if not no_browser and not dev:
         launch_browser(f"http://localhost:{port}")

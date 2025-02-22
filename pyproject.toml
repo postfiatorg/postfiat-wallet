@@ -1,36 +1,39 @@
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling~=1.26.0"]
+build-backend = "hatchling.build"
 
 [project]
-name = "pft-wallet"
-version = "0.1.0"
+name = "postfiat-wallet"
+dynamic = ["version"]
+description = "Local Wallet for the Post Fiat Network"
 requires-python = ">=3.12"
+readme = "README.md"
 dependencies = [
-    "fastapi",
-    "uvicorn",
-    "boto3",
-    "dynaconf",
-    "websockets",
-    "web3",
-    "click",
-    "setuptools",
-    # Task Node dependencies
+    "boto3~=1.36.24",
+    "click~=8.1.8",
+    "cryptography~=44.0.1",
+    "dynaconf~=3.2.10",
+    "fastapi~=0.115.8",
+    "packaging~=24.2",
     "postfiat-sdk>=0.1.0a0,<0.1.1",
-    # XRPL dependencies
-    "xrpl-py",
-    "cryptography"
+    "uvicorn~=0.34.0",
+    "web3~=7.8.0",
+    "websockets~=13.1",
+    "xrpl-py~=4.0.0",
 ]
 
 [tool.setuptools.package-data]
-pft_wallet = ["static/**/*"]
+postfiat_wallet = ["static/**/*"]
 
 [project.scripts]
-pft-wallet = "pft_wallet.cli:main"
+postfiat-wallet = "postfiat_wallet.cli:main"
 
 [tool.setuptools]
-packages = ["pft_wallet"]
-package-dir = {"" = "src"}
+packages = ["src/postfiat_wallet"]
+
+[tool.hatch.version]
+source = "code"
+path = "__about__.py"
 
 [project.optional-dependencies]
 dev = [
@@ -38,5 +41,6 @@ dev = [
     "pytest-asyncio",
     "black",
     "isort",
-    "mypy"
+    "mypy",
+    "hatch",
 ]

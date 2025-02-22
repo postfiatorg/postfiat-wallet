@@ -7,7 +7,7 @@ from pft_wallet.server.api import router as api_router  # Adjust the import if y
 from pft_wallet.services.storage import init_storage
 
 def create_app():
-    app = FastAPI(title="PFT Wallet API")
+    app = FastAPI(title="Post Fiat Wallet API")
     
     app.add_middleware(
         CORSMiddleware,
@@ -20,7 +20,7 @@ def create_app():
     app.include_router(api_router, prefix="/api")
     
     # Only serve static files when not in development mode
-    if not os.getenv("PFT_DEV"):
+    if not os.getenv("POSTFIAT_DEV"):
         static_dir = pkg_resources.resource_filename("pft_wallet", "static")
         if os.path.exists(static_dir):
             app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

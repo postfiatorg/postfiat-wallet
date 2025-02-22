@@ -13,13 +13,13 @@ DEFAULT_CONFIG = {
         "ui_prefix": "wallet-ui"  # Where the UI files will live in the bucket
     },
     "PATHS": {
-        "data_dir": "~/.pft-wallet",
-        "cache_dir": "~/.pft-wallet/cache"
+        "data_dir": "~/.postfiat-wallet",
+        "cache_dir": "~/.postfiat-wallet/cache"
     }
 }
 
 settings = Dynaconf(
-    envvar_prefix="PFT",
+    envvar_prefix="POSTFIAT",
     settings_files=["settings.yaml", ".secrets.yaml"],
     environments=True,
     default_settings=DEFAULT_CONFIG
