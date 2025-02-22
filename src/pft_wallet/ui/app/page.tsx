@@ -10,7 +10,7 @@ import AuthPage from '@/components/AuthPage';
 import Navbar from '@/components/navbar';
 import { AuthState } from '@/types/auth';
 import { AuthProvider } from '@/context/AuthContext';
-
+import Onboarding from '@/components/Onboarding';
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
   const [auth, setAuth] = useState<AuthState>({
@@ -19,6 +19,7 @@ export default function Home() {
     username: null,
     password: null
   });
+  const [initStatus, setInitStatus] = useState<string | null>(null);
 
   useEffect(() => {
     // Check if we have a stored wallet address
@@ -63,6 +64,11 @@ export default function Home() {
 
   if (!auth.isAuthenticated) {
     return <AuthPage onAuth={handleAuth} />;
+  }
+
+  // Show onboarding UI if not fully initialized
+  if (initStatus && initStatus !== 'COMPLETE') {
+    return <Onboarding initStatus={initStatus} address={auth.address!} />;
   }
 
   const renderPage = () => {

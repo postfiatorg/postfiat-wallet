@@ -3,9 +3,10 @@ from xrpl.asyncio.clients import AsyncJsonRpcClient
 from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
-from xrpl.core.keypairs import derive_classic_address
+from xrpl.core.keypairs import derive_classic_address, ED25519
 from xrpl.models.transactions import Payment, TrustSet
 from xrpl.transaction import sign_and_submit
+from xrpl.core import addresscodec
 import logging
 import asyncio
 
@@ -197,3 +198,28 @@ class BlockchainService:
         except Exception as e:
             logger.error(f"Error in sign_and_send_trust_set: {str(e)}")
             raise
+
+    def get_ecdh_public_key_from_seed(self, wallet_seed: str) -> str:
+        """
+        Derive an Ed25519-based ECDH public key (hex) from a wallet seed.
+        
+        Args:
+            wallet_seed: The wallet seed (secret key)
+            
+        Returns:
+            str: The ED25519 public key in hex format
+            
+        Raises:
+            ValueError: If the seed is invalid or key derivation fails
+        """
+        try:
+            # Decode seed to raw entropy bytes
+            seed_bytes, _ = addresscodec.decode_seed(wallet_seed)
+            
+            # Derive ED25519 keypair using XRPL method
+            pub_hex, _ = ED25519.derive_keypair(seed_bytes, is_validator=False)
+            
+            return pub_hex
+        except Exception as e:
+            logger.error(f"Error deriving ECDH public key: {str(e)}")
+            raise ValueError(f"Failed to derive ECDH public key: {str(e)}")

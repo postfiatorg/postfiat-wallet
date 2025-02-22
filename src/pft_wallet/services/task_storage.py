@@ -57,10 +57,12 @@ class TaskStorage:
         self._refresh_tasks: Dict[str, asyncio.Task] = {}
 
     async def get_ledger_range(self, wallet_address: str) -> tuple[int, int]:
-        """Get valid ledger range for an account"""
-        # Use a fixed starting point for now since we don't need account creation ledger
+        """
+        Get valid ledger range for an account. Defaults to the earliest PostFiat ledger
+        and the latest ledger (-1).
+        """
         first_ledger = EARLIEST_LEDGER_SEQ
-        return first_ledger, -1  # -1 indicates latest ledger
+        return first_ledger, -1
 
     async def initialize_user_tasks(self, wallet_address: str) -> None:
         """
@@ -306,3 +308,82 @@ class TaskStorage:
             self._state = UserState()  # Create fresh state
         
         logger.info(f"State cleared for {wallet_address}")
+
+    async def get_user_payments(
+        self,
+        wallet_address: str,
+        start_ledger: Optional[int] = None,
+        end_ledger: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch all user Payment-type transactions for the given wallet_address,
+        excluding those with the node address (TASK_NODE_ADDRESS). This uses
+        the postfiat-sdk's CachingRpcClient to retrieve the transactions directly
+        from the XRPL (with caching).
+        """
+        if start_ledger is None:
+            start_ledger = EARLIEST_LEDGER_SEQ
+        if end_ledger is None:
+            end_ledger = -1
+
+        logger.info(f"Fetching user payments for {wallet_address} from {start_ledger} to {end_ledger}")
+        payments = []
+
+        async for txn in self.client.get_account_txns(wallet_address, start_ledger, end_ledger):
+            # Only consider Payment transactions
+            tx_type = txn.data.get("tx_json", {}).get("TransactionType")
+            if tx_type != "Payment":
+                continue
+
+            # Exclude transactions involving the node address
+            if txn.from_address == TASK_NODE_ADDRESS or txn.to_address == TASK_NODE_ADDRESS:
+                continue
+
+            # Build a simple dictionary describing the transaction
+            # Note: txn.amount_pft is automatically populated for PFT transfers.
+            # For XRP, delivered_amount in the metadata may be a string in drops.
+            # If it's a dictionary, it often indicates an issued currency (PFT).
+            raw_delivered = txn.data.get("meta", {}).get("delivered_amount", 0)
+
+            if isinstance(raw_delivered, dict):
+                # Already accounted for in txn.amount_pft for PFT
+                xrp_amount = 0
+            else:
+                # Likely XRP in drops
+                try:
+                    xrp_amount = float(raw_delivered) / 1_000_000
+                except (ValueError, TypeError):
+                    xrp_amount = 0
+
+            payments.append({
+                "ledger_index": txn.ledger_index,
+                "timestamp": txn.timestamp.isoformat() if txn.timestamp else None,
+                "hash": txn.hash,
+                "from_address": txn.from_address,
+                "to_address": txn.to_address,
+                "amount_xrp": xrp_amount,
+                "amount_pft": float(txn.amount_pft),
+                "memo_data": txn.memo_data,
+            })
+
+        return payments
+
+    async def get_account_status(self, wallet_address: str) -> Dict[str, Any]:
+        """
+        Get account status information including initiation rite status,
+        context document link, and blacklist status.
+        """
+        logger.info(f"Fetching account status for {wallet_address}")
+        
+        if not self._state.node_account:
+            return {
+                "init_rite_status": "UNSTARTED",
+                "context_doc_link": None,
+                "is_blacklisted": False
+            }
+        
+        return {
+            "init_rite_status": self._state.node_account.init_rite_status.name,
+            "context_doc_link": self._state.node_account.context_doc_link,
+            "is_blacklisted": self._state.node_account.is_blacklisted
+        }

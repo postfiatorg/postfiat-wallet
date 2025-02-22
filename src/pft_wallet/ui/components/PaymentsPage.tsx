@@ -1,121 +1,234 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+import { PaymentModal } from './modals/PaymentModal';
 
 const PaymentsPage = () => {
- // const [activeTab, setActiveTab] = useState('payments');
+  const { address } = useContext(AuthContext);
   const [selectedToken, setSelectedToken] = useState('XRP');
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   
+  // Form state
+  const [amount, setAmount] = useState('');
+  const [toAddress, setToAddress] = useState('');
+  const [memoId, setMemoId] = useState('');
+  const [memo, setMemo] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [error, setError] = useState('');
 
-  const transactions = [
-    {
-      id: 1,
-      date: '2025-02-07 08:54:01',
-      amount: '1',
-      token: 'PFT',
-      direction: 'From',
-      address: 'r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD',
-      txHash: '7004C97FB69B558202D0DCE6CC8F553F334DDB77FE92FF1E072E00C834E815AC'
-    },
-    // ... add more transactions as needed
-  ];
+  const fetchPayments = async () => {
+    if (!address) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/payments/${address}`);
+      if (!response.ok) {
+        throw new Error('Failed to load payments');
+      }
+      const data = await response.json();
+      
+      // Sort transactions by timestamp in descending order
+      const sortedTransactions = data.payments.sort((a: any, b: any) => {
+        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      });
+      
+      setTransactions(sortedTransactions);
+    } catch (error) {
+      console.error('Error fetching payments:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchPayments();
+  }, [address]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!amount || !toAddress) {
+      setError('Amount and destination address are required');
+      return;
+    }
+    setIsModalOpen(true);
+  };
+
+  const handlePaymentSubmit = async (
+    amount: string,
+    toAddress: string,
+    currency: string,
+    memoId?: string,
+    memo?: string
+  ) => {
+    setStatus('loading');
+    setError('');
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/transaction/payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from_account: address,
+          to_address: toAddress,
+          amount: amount,
+          currency: currency,
+          memo_id: memoId || undefined,
+          memo: memo || undefined
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to send payment');
+      }
+
+      // Clear form
+      setAmount('');
+      setToAddress('');
+      setMemoId('');
+      setMemo('');
+      setStatus('success');
+      
+      // Refresh transactions list
+      await fetchPayments();
+    } catch (err) {
+      setError(err.message);
+      setStatus('error');
+      throw err; // Re-throw to be caught by the modal
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 p-4">
-      {/* Header */}
-      <div className="mb-6">
-      </div>
+    <div className="flex flex-col h-screen bg-gray-900 text-gray-100">
+      {/* Fixed Header with Form */}
+      <div className="flex-none p-4">
+        <h1 className="text-2xl font-bold mb-6">Payments</h1>
 
-
-      {/* Payment Form */}
-      <div className="mb-6 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Left Column */}
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Send Amount"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="relative">
-                <select
-                  value={selectedToken}
-                  onChange={(e) => setSelectedToken(e.target.value)}
-                  className="bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-8"
-                >
-                  <option value="XRP">XRP</option>
-                  <option value="PFT">PFT</option>
-                </select>
-                <div className="absolute right-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+        {/* Payment Form */}
+        <form onSubmit={handleSubmit} className="mb-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Left Column */}
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder="Send Amount"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="relative">
+                  <select
+                    value={selectedToken}
+                    onChange={(e) => setSelectedToken(e.target.value)}
+                    className="bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-8"
+                  >
+                    <option value="XRP">XRP</option>
+                    <option value="PFT">PFT</option>
+                  </select>
+                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                    <svg
+                      className="w-4 h-4 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                 </div>
               </div>
-            </div>
-            <input
-              type="text"
-              placeholder="To Address"
-              className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          {/* Right Column */}
-          <div className="space-y-4">
-            <input
-              type="text"
-              placeholder="Memo ID (optional)"
-              className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="flex justify-between items-center">
               <input
                 type="text"
-                placeholder="Memo (Optional)"
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 mr-2"
+                value={toAddress}
+                onChange={(e) => setToAddress(e.target.value)}
+                placeholder="To Address"
+                className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition-colors">
-                Send
-              </button>
+            </div>
+            {/* Right Column */}
+            <div className="space-y-4">
+              <input
+                type="text"
+                value={memoId}
+                onChange={(e) => setMemoId(e.target.value)}
+                placeholder="Memo ID (optional)"
+                className="w-full bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex justify-between items-center">
+                <input
+                  type="text"
+                  value={memo}
+                  onChange={(e) => setMemo(e.target.value)}
+                  placeholder="Memo (Optional)"
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-md p-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 mr-2"
+                />
+                <button 
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition-colors"
+                >
+                  Send
+                </button>
+              </div>
             </div>
           </div>
+          {error && (
+            <div className="text-red-500 text-sm mt-2">{error}</div>
+          )}
+        </form>
+      </div>
+
+      {/* Scrollable Transaction Table Container */}
+      <div className="flex-1 min-h-0">
+        <div className="h-full overflow-y-auto px-4">
+          <table className="w-full text-left">
+            <thead className="sticky top-0 bg-gray-900 z-10">
+              <tr className="border-b border-gray-700">
+                <th className="p-4 text-gray-400 font-normal">#</th>
+                <th className="p-4 text-gray-400 font-normal">Date</th>
+                <th className="p-4 text-gray-400 font-normal">Amount</th>
+                <th className="p-4 text-gray-400 font-normal">Token</th>
+                <th className="p-4 text-gray-400 font-normal">To/From</th>
+                <th className="p-4 text-gray-400 font-normal">Address</th>
+                <th className="p-4 text-gray-400 font-normal">Tx Hash</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((tx, index) => (
+                <tr key={index} className="border-b border-gray-800 hover:bg-gray-800/50">
+                  <td className="p-4 text-gray-300">{index + 1}</td>
+                  <td className="p-4 text-gray-300 whitespace-nowrap">{tx.timestamp}</td>
+                  <td className="p-4 text-gray-300">{tx.amount_xrp > 0 ? tx.amount_xrp : tx.amount_pft}</td>
+                  <td className="p-4 text-gray-300">
+                    {tx.amount_xrp > 0 ? 'XRP' : (tx.amount_pft > 0 ? 'PFT' : '')}
+                  </td>
+                  <td className="p-4 text-gray-300">
+                    {tx.from_address === address ? 'To' : 'From'}
+                  </td>
+                  <td className="p-4 text-gray-300 font-mono">
+                    {tx.from_address === address ? tx.to_address : tx.from_address}
+                  </td>
+                  <td className="p-4 text-gray-300 font-mono">{tx.hash}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Transactions Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-gray-700">
-              <th className="p-4 text-gray-400 font-normal">#</th>
-              <th className="p-4 text-gray-400 font-normal">Date</th>
-              <th className="p-4 text-gray-400 font-normal">Amount</th>
-              <th className="p-4 text-gray-400 font-normal">Token</th>
-              <th className="p-4 text-gray-400 font-normal">To/From</th>
-              <th className="p-4 text-gray-400 font-normal">Address</th>
-              <th className="p-4 text-gray-400 font-normal">Tx Hash</th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((tx) => (
-              <tr key={tx.id} className="border-b border-gray-800 hover:bg-gray-800/50">
-                <td className="p-4 text-gray-300">{tx.id}</td>
-                <td className="p-4 text-gray-300 whitespace-nowrap">{tx.date}</td>
-                <td className="p-4 text-gray-300">{tx.amount}</td>
-                <td className="p-4 text-gray-300">{tx.token}</td>
-                <td className="p-4 text-gray-300">{tx.direction}</td>
-                <td className="p-4 text-gray-300 font-mono">{tx.address}</td>
-                <td className="p-4 text-gray-300 font-mono">{tx.txHash}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Footer Status */}
-      <div className="fixed bottom-0 left-0 right-0 flex justify-between p-2 bg-gray-800 text-gray-400 text-sm">
-        <span>Wallet state: idle</span>
-        <span>IDLE</span>
-      </div>
+    
+      {/* Payment Modal */}
+      <PaymentModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handlePaymentSubmit}
+        initialAmount={amount}
+        initialToAddress={toAddress}
+        initialCurrency={selectedToken}
+        initialMemoId={memoId}
+        initialMemo={memo}
+      />
     </div>
   );
 };
