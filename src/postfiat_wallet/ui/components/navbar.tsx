@@ -22,15 +22,15 @@ export default function Navbar({ username, onSignOut, activePage, onPageChange }
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex items-center space-x-4">
-            <span className="text-white font-bold text-xl">PFT Wallet</span>
+            <span className="text-white font-bold text-xl">Post Fiat Wallet</span>
             <div className="flex space-x-2">
               {navItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => onPageChange(item.id)}
                   className={`px-4 py-2 rounded-md text-sm font-medium 
-                    ${activePage === item.id 
-                      ? 'bg-slate-800 text-white' 
+                    ${activePage === item.id
+                      ? 'bg-slate-800 text-white'
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white'} 
                     transition-colors duration-200 ease-in-out`}
                 >
