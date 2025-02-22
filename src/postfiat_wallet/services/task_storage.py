@@ -5,7 +5,7 @@ from postfiat.nodes.task.state import TaskStatus, UserState
 from postfiat.utils.streams import combine_streams
 from postfiat.nodes.task.codecs.v0.task import decode_account_stream as decode_task_stream
 from postfiat.nodes.task.codecs.v0.remembrancer import decode_account_stream as decode_remembrancer_stream
-from pft_wallet.config import settings
+from postfiat_wallet.config import settings
 from pathlib import Path
 import logging
 import asyncio

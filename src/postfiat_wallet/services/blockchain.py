@@ -1,16 +1,16 @@
 from typing import List, Dict, Any
 from xrpl.asyncio.clients import AsyncJsonRpcClient
+from xrpl.constants import CryptoAlgorithm
 from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
-from xrpl.core.keypairs import derive_classic_address, ed25519
+from xrpl.core.keypairs import derive_keypair
 from xrpl.models.transactions import Payment, TrustSet
 from xrpl.transaction import sign_and_submit
 from xrpl.core import addresscodec
 import logging
 import asyncio
 import nacl.bindings
-from xrpl.core.keypairs.ed25519 import ED25519
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ class BlockchainService:
         """
         try:
             raw_entropy = self._get_raw_entropy(wallet_seed)
-            public_key, _ = ED25519.derive_keypair(raw_entropy, is_validator=False)
+            public_key, _ = derive_keypair(raw_entropy, is_validator=False, algorithm=CryptoAlgorithm.ED25519)
             return public_key
         except Exception as e:
             logger.error(f"Failed to derive ECDH public key: {e}")
