@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import SummaryPage from '@/components/summarypage';
+import SummaryPage from '@/components/SummaryPage';
 import ProposalsPage from '@/components/ProposalsPage';
 import VerificationPage from '@/components/VerificationPage';
 import RewardsPage from '@/components/RewardsPage';
@@ -40,7 +40,7 @@ export default function Home() {
   useEffect(() => {
     const checkInitStatus = async () => {
       if (!auth.address) return;
-      
+
       try {
         console.log('Checking init status for address:', auth.address);
         const response = await fetch(`http://localhost:8000/api/account/${auth.address}/status`);
@@ -102,9 +102,9 @@ export default function Home() {
   if (initStatus && ['UNSTARTED', 'PENDING_INITIATION', 'PENDING'].includes(initStatus)) {
     return (
       <AuthProvider value={auth} onClearAuth={handleSignOut}>
-        <Onboarding 
-          initStatus={initStatus} 
-          address={auth.address!} 
+        <Onboarding
+          initStatus={initStatus}
+          address={auth.address!}
           onCheckStatus={(data) => {
             setInitStatus(data.init_rite_status);
           }}
@@ -134,8 +134,8 @@ export default function Home() {
   return (
     <AuthProvider value={auth} onClearAuth={handleSignOut}>
       <div className="min-h-screen bg-slate-950">
-        <Navbar 
-          username={auth.username} 
+        <Navbar
+          username={auth.username}
           onSignOut={handleSignOut}
           activePage={activePage}
           onPageChange={handlePageChange}
