@@ -1,9 +1,10 @@
 from typing import List, Dict, Any
 from xrpl.asyncio.clients import AsyncJsonRpcClient
+from xrpl.constants import CryptoAlgorithm
 from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
-from xrpl.core.keypairs import derive_classic_address, ED25519
+from xrpl.core.keypairs import derive_keypair
 from xrpl.models.transactions import Payment, TrustSet
 from xrpl.transaction import sign_and_submit
 from xrpl.core import addresscodec
@@ -217,7 +218,7 @@ class BlockchainService:
             seed_bytes, _ = addresscodec.decode_seed(wallet_seed)
             
             # Derive ED25519 keypair using XRPL method
-            pub_hex, _ = ED25519.derive_keypair(seed_bytes, is_validator=False)
+            pub_hex, _ = derive_keypair(seed_bytes, is_validator=False, algorithm=CryptoAlgorithm.ED25519)
             
             return pub_hex
         except Exception as e:

@@ -3,7 +3,7 @@ import sys
 import click
 import uvicorn
 import requests
-import pkg_resources
+import importlib.metadata
 from packaging import version
 from pathlib import Path
 import logging
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def check_package_updates():
     """Check PyPI for newer package versions"""
     try:
-        current = pkg_resources.get_distribution('postfiat-wallet').version
+        current = importlib.metadata.version('postfiat-wallet')
         pypi_response = requests.get('https://pypi.org/pypi/postfiat-wallet/json', timeout=2)
         latest = version.parse(pypi_response.json()['info']['version'])
         
@@ -52,7 +52,7 @@ def start(port, no_browser, no_updates, dev):
     if dev:
         os.environ["POSTFIAT_DEV"] = "1"
         click.echo("Running in development mode")
-        click.echo("Start the Next.js dev server with: cd src/pft_wallet/ui && npm run dev")
+        click.echo("Start the Next.js dev server with: cd src/postfiat_wallet/ui && npm run dev")
         
     # Use configured port if none specified
     if port is None:

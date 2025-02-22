@@ -1,5 +1,5 @@
 import webbrowser
-from pft_wallet.config import settings
+from postfiat_wallet.config import settings
 
 def launch_browser(url: str) -> None:
     """Launch the default web browser with the given URL."""

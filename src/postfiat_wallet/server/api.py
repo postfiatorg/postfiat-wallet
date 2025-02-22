@@ -2,14 +2,14 @@ from fastapi import APIRouter, HTTPException, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from pft_wallet.services.blockchain import BlockchainService
-from pft_wallet.services import storage
+from postfiat_wallet.services.blockchain import BlockchainService
+from postfiat_wallet.services import storage
 import logging
-from pft_wallet.services.task_storage import TaskStorage
+from postfiat_wallet.services.task_storage import TaskStorage
 from enum import Enum
 from postfiat.nodes.task.state import TaskStatus
 from typing import Optional, Dict, Any
-from pft_wallet.services.transaction import TransactionBuilder
+from postfiat_wallet.services.transaction import TransactionBuilder
 from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
 from xrpl.models.transactions import TrustSet
 
