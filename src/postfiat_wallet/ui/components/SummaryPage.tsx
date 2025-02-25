@@ -18,6 +18,14 @@ interface Task {
   message_history: MessageHistoryItem[];
 }
 
+interface AccountStatus {
+  init_rite_status: string;
+  context_doc_link: string | null;
+  is_blacklisted: boolean;
+  initiation_rite: string | null;
+  sweep_address: string | null;
+}
+
 const SummaryPage = () => {
   const { address } = useContext(AuthContext);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
@@ -29,8 +37,12 @@ const SummaryPage = () => {
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [tasksError, setTasksError] = useState<string | null>(null);
 
-  // Add this near the other state declarations (around line 19)
+  // Add this near the other state declarations
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  
+  // Add state for account status
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
 
   useEffect(() => {
     const fetchSummary = async () => {
@@ -65,147 +77,80 @@ const SummaryPage = () => {
     fetchSummary();
   }, [address]);
 
-  // Start the refresh loop when the component mounts
+  // Add effect to fetch account status
+  useEffect(() => {
+    const fetchAccountStatus = async () => {
+      if (!address) {
+        console.log("No address available for status check");
+        setLoadingStatus(false);
+        return;
+      }
+      
+      console.log("Fetching account status for address:", address);
+      try {
+        const response = await fetch(`http://localhost:8000/api/account/${address}/status?refresh=true`);
+        console.log("Status API Response:", response);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("Status API Error:", errorText);
+          throw new Error(`Failed to fetch account status: ${errorText}`);
+        }
+        
+        const data = await response.json();
+        console.log("Received account status data:", JSON.stringify(data, null, 2));
+        setAccountStatus(data);
+      } catch (err) {
+        console.error("Status fetch error:", err);
+      } finally {
+        setLoadingStatus(false);
+      }
+    };
+
+    fetchAccountStatus();
+  }, [address]);
+
   useEffect(() => {
     const startRefreshLoop = async () => {
       if (!address) return;
       
-      try {
-        await fetch(`http://localhost:8000/api/tasks/start-refresh/${address}`, {
-          method: 'POST'
-        });
-        console.log("Started task refresh loop");
-      } catch (error) {
-        console.error("Failed to start refresh loop:", error);
-      }
-    };
-
-    startRefreshLoop();
-
-    // Cleanup: stop the refresh loop when component unmounts
-    return () => {
-      if (address) {
-        fetch(`http://localhost:8000/api/tasks/stop-refresh/${address}`, {
-          method: 'POST'
-        }).catch(error => {
-          console.error("Failed to stop refresh loop:", error);
-        });
-      }
-    };
-  }, [address]);
-
-  // Add periodic frontend refresh (every 30 seconds)
-  useEffect(() => {
-    if (!address) return;
-
-    const intervalId = setInterval(() => {
-      fetchTasks();
-    }, 30000); // 30 seconds
-
-    return () => clearInterval(intervalId);
-  }, [address]);
-
-  // Extract fetchTasks into a separate function so we can reuse it
-  const fetchTasks = async () => {
-    if (!address) {
-      setLoadingTasks(false);
-      return;
-    }
-    
-    try {
-      console.log("=== Task Message Analysis ===");
-      console.log("Fetching tasks for address:", address);
-      
-      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to fetch tasks: ${text}`);
-      }
-      const data = await response.json();
-      console.log("Raw task data:", data);
-      
-      // When no status is provided, our API returns tasks grouped by status.
-      // Flatten the results from an object into an array.
-      const flattenedTasks = Object.values(data).flat();
-      
-      // Analyze message directions
-      let userToNodeCount = 0;
-      let nodeToUserCount = 0;
-      
-      (flattenedTasks as Task[]).forEach((task: Task) => {
-        console.log("\nTask ID:", task.id);
-        console.log("Status:", task.status);
-        console.log("Message History:", task.message_history);
-        
-        // Count message directions
-        task.message_history?.forEach((msg: MessageHistoryItem) => {
-          if (msg.direction === 'outbound') {
-            userToNodeCount++;
-          } else if (msg.direction === 'inbound') {
-            nodeToUserCount++;
+      const fetchTasks = async () => {
+        try {
+          setLoadingTasks(true);
+          const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch tasks: ${response.statusText}`);
           }
-          console.log(`Message Direction: ${msg.direction}, Content: ${msg.data}`);
-        });
-      });
-      
-      console.log("\n=== Message Direction Summary ===");
-      console.log(`User -> Node messages: ${userToNodeCount}`);
-      console.log(`Node -> User messages: ${nodeToUserCount}`);
-      console.log("Total tasks:", flattenedTasks.length);
-      
-      // Function to parse timestamp from task id. Adjust as needed.
-      const parseTimestamp = (id: string): number => {
-        const tsStr = id.split('__')[0]; // e.g., "2025-01-16_10:02"
-        // Replace the first underscore (between date and time) with 'T' and append seconds (":00")
-        const isoTimestamp = tsStr.replace('_', 'T') + ":00"; // becomes "2025-01-16T10:02:00"
-        return new Date(isoTimestamp).getTime();
+          
+          const data = await response.json();
+          setTasks(data.tasks || []);
+          setTasksError(null);
+        } catch (err) {
+          console.error("Error fetching tasks:", err);
+          setTasksError(err instanceof Error ? err.message : 'Failed to fetch tasks');
+        } finally {
+          setLoadingTasks(false);
+        }
       };
-
-      // Sort tasks by the extracted timestamp in descending order.
-      (flattenedTasks as Task[]).sort((a: Task, b: Task) => {
-        return parseTimestamp(b.id) - parseTimestamp(a.id);
-      });
       
-      setTasks(flattenedTasks);
-    } catch (error) {
-      console.error("Error fetching tasks:", error);
-      setTasksError(
-        error instanceof Error ? error.message : "An error occurred while fetching tasks"
-      );
-    } finally {
-      setLoadingTasks(false);
-    }
-  };
-
-  // Initial fetch
-  useEffect(() => {
-    fetchTasks();
-  }, [address]);
-
-  // Add this effect to handle address changes
-  useEffect(() => {
-    if (!address) return;
-    
-    // Clear previous user's state when address changes
-    const clearPreviousState = async () => {
-      try {
-        await fetch(`http://localhost:8000/api/tasks/clear-state/${address}`, {
-          method: 'POST'
-        });
-        console.log("Cleared previous user state");
-      } catch (error) {
-        console.error("Failed to clear previous state:", error);
-      }
+      // Initial fetch
+      await fetchTasks();
+      
+      // Set up interval for periodic refreshes
+      const intervalId = setInterval(fetchTasks, 30000); // Refresh every 30 seconds
+      
+      // Clean up interval on component unmount
+      return () => clearInterval(intervalId);
     };
     
-    clearPreviousState();
-    fetchTasks(); // Fetch tasks for new user
+    startRefreshLoop();
   }, [address]);
 
   const balanceInfo = [
     {
       label: "XRP Balance",
-      value: (typeof summary?.xrp_balance === 'number' 
+      value: (typeof summary?.xrp_balance === 'number'
         ? summary.xrp_balance.toFixed(6) 
         : parseFloat(summary?.xrp_balance || "0").toFixed(6))
     },
@@ -229,6 +174,39 @@ const SummaryPage = () => {
       copyable: true
     }
   ];
+
+  // Add PostFiat status details
+  const postfiatDetails = loadingStatus ? [] : [
+    {
+      label: "Initiation Status",
+      value: accountStatus?.init_rite_status || "Unknown",
+      className: accountStatus?.init_rite_status === 'COMPLETED' 
+        ? 'text-green-400' 
+        : accountStatus?.init_rite_status === 'PENDING' 
+          ? 'text-yellow-400'
+          : 'text-slate-200'
+    },
+    {
+      label: "Blacklist Status",
+      value: accountStatus?.is_blacklisted ? "BLACKLISTED" : "NOT BLACKLISTED",
+      className: accountStatus?.is_blacklisted ? "text-red-400" : "text-green-400"
+    },
+    ...(accountStatus?.sweep_address ? [{
+      label: "Sweep Address",
+      value: accountStatus.sweep_address,
+      copyable: true
+    }] : []),
+    ...(accountStatus?.context_doc_link ? [{
+      label: "Context Document",
+      value: "View Document",
+      link: accountStatus.context_doc_link
+    }] : []),
+    ...(accountStatus?.initiation_rite ? [{
+      label: "Initiation Rite",
+      value: `"${accountStatus.initiation_rite}"`,
+      className: "italic"
+    }] : [])
+  ].filter(item => item); // Filter out any undefined items
 
   // Function to copy text to the clipboard
   const copyToClipboard = async (text: string) => {
@@ -371,6 +349,48 @@ const SummaryPage = () => {
                   )}
                 </div>
               ))}
+              
+              {/* PostFiat Status Details */}
+              {postfiatDetails.length > 0 && (
+                <>
+                  <div className="border-t border-slate-800 pt-4 mt-4">
+                    <p className="text-sm font-medium text-slate-400 mb-4">PostFiat Status</p>
+                    
+                    {postfiatDetails.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4">
+                        <div>
+                          <p className="text-sm font-medium text-slate-400">{item.label}</p>
+                          {item.link ? (
+                            <a 
+                              href={item.link} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-400 hover:text-blue-300 underline mt-1"
+                            >
+                              {item.value}
+                            </a>
+                          ) : (
+                            <p className={`text-sm ${item.className || 'text-slate-200'} mt-1 ${item.label === 'Sweep Address' ? 'font-mono' : ''}`}>
+                              {item.value}
+                            </p>
+                          )}
+                        </div>
+                        {item.copyable && (
+                          <button 
+                            onClick={() => copyToClipboard(item.value)}
+                            className="p-2 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                            title="Copy to clipboard"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

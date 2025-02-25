@@ -130,6 +130,22 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
         <div className="bg-slate-900 p-8 rounded-lg border border-slate-800 w-full max-w-md">
           <h1 className="text-2xl font-bold text-white mb-6">Create New Wallet</h1>
           
+          {privateKey && (
+            <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg">
+              <p className="text-yellow-500 text-sm font-medium">
+                <span className="flex items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Important Warning
+                </span>
+              </p>
+              <p className="text-yellow-400 text-sm mt-1">
+                Please save your XRP Secret in a secure location. If you lose it, it <span className="font-bold">cannot be recovered</span> and you will permanently lose access to your funds.
+              </p>
+            </div>
+          )}
+          
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1">

@@ -106,6 +106,10 @@ class PFLogRequest(BaseModel):
     remote_ed_pubkey: str
     use_pft: bool = True
 
+class SeedRequest(BaseModel):
+    account: str
+    password: str
+
 @router.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -434,13 +438,24 @@ async def send_payment(request: PaymentRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/account/{account}/status")
-async def get_account_status(account: str):
+async def get_account_status(account: str, refresh: bool = True):
     """
     Get account status information including initiation rite status,
     context document link, and blacklist status.
+    
+    Parameters:
+    - account: The account address to check
+    - refresh: Whether to refresh transaction data before checking status (default: True)
     """
     logger.info(f"Received account status request for: {account}")
     try:
+        # Force refresh of transaction data if requested
+        if refresh:
+            logger.info(f"Refreshing transaction data for account: {account}")
+            # Initialize user tasks which will fetch latest transactions
+            await task_storage.initialize_user_tasks(account)
+            
+        # Now get the status with fresh data
         status = await task_storage.get_account_status(account)
         return status
     except Exception as e:
@@ -595,6 +610,33 @@ async def send_pf_log_chunked(req: PFLogRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error sending PF Log transaction: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/wallet/seed")
+async def get_wallet_seed(req: SeedRequest):
+    """
+    Retrieve the wallet seed using the account address and password.
+    This is a sensitive operation and should be used with caution.
+    """
+    try:
+        logger.info(f"Retrieving wallet seed for account: {req.account}")
+        
+        # Get wallet info from storage
+        wallet_info = storage.get_wallet(req.account)
+        
+        # Decrypt the private key using the provided password
+        try:
+            seed = storage.decrypt_private_key(wallet_info["encrypted_key"], req.password)
+            return {"seed": seed}
+        except ValueError as e:
+            logger.error(f"Failed to decrypt seed for {req.account}: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid password")
+            
+    except KeyError:
+        logger.error(f"Wallet not found for account: {req.account}")
+        raise HTTPException(status_code=404, detail="Wallet not found")
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving seed for {req.account}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api

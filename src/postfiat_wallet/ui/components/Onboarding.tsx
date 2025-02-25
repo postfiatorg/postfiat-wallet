@@ -22,6 +22,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
   const [googleDocLink, setGoogleDocLink] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [isWaitingForConfirmation, setIsWaitingForConfirmation] = useState(false);
 
   const fetchBalance = async () => {
     try {
@@ -99,11 +100,27 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
       const result = await response.json();
       console.log('Initiation submitted successfully:', result);
       
+      // Set waiting for confirmation state
+      setIsWaitingForConfirmation(true);
+      
       // Trigger status check to update UI
-      onCheckStatus({ initiation_status: 'PENDING_INITIATION' });
+      onCheckStatus({ init_rite_status: 'PENDING_INITIATION' });
+      
+      // Start checking status periodically
+      const checkInterval = setInterval(async () => {
+        await checkInitStatus();
+      }, 10000);
+      
+      // Clear interval after 2 minutes
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        setIsWaitingForConfirmation(false);
+      }, 120000);
+      
     } catch (err) {
       console.error('Error submitting initiation:', err);
       setError(err instanceof Error ? err.message : 'Failed to submit initiation');
+      setIsWaitingForConfirmation(false);
     } finally {
       setIsSubmitting(false);
       setShowPasswordModal(false);
@@ -136,6 +153,51 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
   const renderStepContent = () => {
     const xrpBalance = balance ? parseFloat(balance.xrp) : 0;
     const needsFunding = xrpBalance <= 0;
+
+    if (isWaitingForConfirmation) {
+      return (
+        <div className="space-y-6">
+          <h2 className="text-2xl font-semibold text-white">Initiation Submitted</h2>
+          <div className="bg-gradient-to-r from-blue-500/10 to-blue-600/10 border border-blue-500/20 rounded-xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-blue-500/20 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-400 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-blue-400">Processing Your Initiation</h3>
+            </div>
+            
+            <div className="space-y-4">
+              <p className="text-gray-300">Your initiation has been submitted to the blockchain. It may take a minute or two to be confirmed.</p>
+              
+              <div className="bg-slate-900/50 rounded-lg p-4">
+                <p className="text-gray-400">The page will automatically update once your initiation is confirmed. Please be patient.</p>
+              </div>
+
+              <div className="border-t border-blue-500/20 pt-4">
+                <p className="text-sm font-medium text-blue-400 mb-3">What's happening now:</p>
+                <ol className="space-y-3 text-gray-300">
+                  <li className="flex items-center gap-2">
+                    <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-500/20 text-blue-400 text-sm">1</span>
+                    <span>Your initiation rite is being recorded on the XRP Ledger</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-500/20 text-blue-400 text-sm">2</span>
+                    <span>A secure connection is being established with the PostFiat node</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-blue-500/20 text-blue-400 text-sm">3</span>
+                    <span>Your Google Doc link is being securely stored</span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     if (needsFunding) {
       return (

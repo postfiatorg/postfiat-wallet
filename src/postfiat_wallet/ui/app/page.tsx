@@ -12,6 +12,8 @@ import { AuthState } from '@/types/auth';
 import { AuthProvider } from '@/context/AuthContext';
 import Onboarding from '@/components/Onboarding';
 import MemosPage from '@/components/MemosPage';
+import SettingsPage from '@/components/SettingsPage';
+
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
   const [auth, setAuth] = useState<AuthState>({
@@ -125,6 +127,8 @@ export default function Home() {
         return <PaymentsPage />;
       case 'memos':
         return <MemosPage address={auth.address!} />;
+      case 'settings':
+        return <SettingsPage />;
       case 'summary':
       default:
         return <SummaryPage />;

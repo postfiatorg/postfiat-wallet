@@ -4,10 +4,11 @@ from xrpl.constants import CryptoAlgorithm
 from xrpl.models.requests import AccountInfo, AccountTx, AccountLines
 from xrpl.wallet import Wallet
 from xrpl.utils import drops_to_xrp
-from xrpl.core.keypairs import derive_keypair
+from xrpl.core.keypairs import derive_keypair, ed25519
 from xrpl.models.transactions import Payment, TrustSet
 from xrpl.transaction import sign_and_submit
 from xrpl.core import addresscodec
+from xrpl.core.keypairs.ed25519 import ED25519
 import logging
 import asyncio
 import nacl.bindings
@@ -205,8 +206,7 @@ class BlockchainService:
             logger.error(f"Error in sign_and_send_trust_set: {str(e)}")
             raise
 
-    @staticmethod
-    def _get_raw_entropy(wallet_seed: str) -> bytes:
+    def _get_raw_entropy(self, wallet_seed: str) -> bytes:
         """Returns the raw entropy bytes from the specified wallet secret"""
         decoded_seed = addresscodec.decode_seed(wallet_seed)
         return decoded_seed[0]
@@ -226,7 +226,7 @@ class BlockchainService:
         """
         try:
             raw_entropy = self._get_raw_entropy(wallet_seed)
-            public_key, _ = derive_keypair(raw_entropy, is_validator=False, algorithm=CryptoAlgorithm.ED25519)
+            public_key, _ = ED25519.derive_keypair(raw_entropy, is_validator=False)
             return public_key
         except Exception as e:
             logger.error(f"Failed to derive ECDH public key: {e}")
@@ -263,32 +263,24 @@ class BlockchainService:
         Returns:
             bytes: The shared secret
         """
-        # First derive the ED25519 keypair using XRPL's method
-        public_key_raw, private_key_raw = ED25519.derive_keypair(seed_bytes, is_validator=False)
+        public_key_raw, private_key_raw = derive_keypair(seed_bytes, algorithm=CryptoAlgorithm.ED25519)
         
-        # Convert private key to bytes and remove ED prefix
         private_key_bytes = bytes.fromhex(private_key_raw)
         if len(private_key_bytes) == 33 and private_key_bytes[0] == 0xED:
-            private_key_bytes = private_key_bytes[1:]  # Remove the ED prefix
+            private_key_bytes = private_key_bytes[1:]
         
-        # Convert public key to bytes and remove ED prefix
         public_key_self_bytes = bytes.fromhex(public_key_raw)
         if len(public_key_self_bytes) == 33 and public_key_self_bytes[0] == 0xED:
-            public_key_self_bytes = public_key_self_bytes[1:]  # Remove the ED prefix
+            public_key_self_bytes = public_key_self_bytes[1:]
         
-        # Combine private and public key for NaCl format (64 bytes)
         private_key_combined = private_key_bytes + public_key_self_bytes
         
-        # Convert their public key
         public_key_bytes = bytes.fromhex(public_key_hex)
         if len(public_key_bytes) == 33 and public_key_bytes[0] == 0xED:
-            public_key_bytes = public_key_bytes[1:]  # Remove the ED prefix
+            public_key_bytes = public_key_bytes[1:]
         
-        # Convert ED25519 keys to Curve25519
         private_curve = nacl.bindings.crypto_sign_ed25519_sk_to_curve25519(private_key_combined)
         public_curve = nacl.bindings.crypto_sign_ed25519_pk_to_curve25519(public_key_bytes)
         
-        # Use raw X25519 function
         shared_secret = nacl.bindings.crypto_scalarmult(private_curve, public_curve)
-
         return shared_secret
