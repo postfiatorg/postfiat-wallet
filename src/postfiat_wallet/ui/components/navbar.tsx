@@ -12,7 +12,7 @@ export default function Navbar({ username, onSignOut, activePage, onPageChange }
     { label: 'Summary', id: 'summary' },
     { label: 'Proposals', id: 'proposals' },
     { label: 'Verification', id: 'verification' },
-    { label: 'Rewards', id: 'rewards' },
+    { label: 'Finished Tasks', id: 'rewards' },
     { label: 'Payments', id: 'payments' },
     { label: 'Memos', id: 'memos' },
     { label: 'Settings', id: 'settings' },
