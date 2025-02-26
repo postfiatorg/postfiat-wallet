@@ -85,41 +85,123 @@ const FinishedTasksPage = () => {
     return task.status === filter;
   });
 
+  // Add this CSS at the top of your file or in your global styles
+  const styles = `
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    .animate-fade-in {
+      animation: fade-in 0.5s ease-out;
+    }
+  `;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-6 animate-fade-in">
+        <style>{styles}</style>
+        {/* Header Skeleton */}
+        <div className="h-8 w-48 bg-slate-700 rounded animate-pulse"></div>
+        
+        {/* Filter Controls Skeleton */}
+        <div className="flex space-x-4 mb-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-10 w-24 bg-slate-700 rounded-lg animate-pulse"></div>
+          ))}
+        </div>
+        
+        {/* Table Header Skeleton */}
+        <div className="overflow-x-auto">
+          <div className="max-h-[calc(100vh-200px)] overflow-y-auto">
+            <table className="w-full text-left">
+              <thead className="sticky top-0 bg-gray-900 z-10">
+                <tr className="border-b border-gray-700">
+                  {['Task ID', 'Proposal', 'Reward/Refusal', 'Payout'].map((header, i) => (
+                    <th key={i} className="p-4">
+                      <div className="h-4 w-24 bg-slate-700 rounded animate-pulse"></div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <tr key={i} className="border-b border-gray-800">
+                    <td className="p-4">
+                      <div className="h-4 w-48 bg-slate-700 rounded animate-pulse"></div>
+                    </td>
+                    <td className="p-4">
+                      <div className="space-y-2">
+                        <div className="h-4 w-full bg-slate-700 rounded animate-pulse"></div>
+                        <div className="h-4 w-3/4 bg-slate-700 rounded animate-pulse"></div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="space-y-2">
+                        <div className="h-4 w-full bg-slate-700 rounded animate-pulse"></div>
+                        <div className="h-4 w-2/3 bg-slate-700 rounded animate-pulse"></div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-20 bg-slate-700 rounded animate-pulse"></div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4">
+      <style>{styles}</style>
       {/* Header */}
       <h1 className="text-2xl font-bold mb-6">Finished Tasks</h1>
 
-      {/* Authentication and Loading States */}
+      {/* Authentication States */}
       {!isAuthenticated && (
         <div className="text-white">Please sign in to view your finished tasks.</div>
       )}
       {isAuthenticated && !address && (
         <div className="text-white">No wallet address found.</div>
       )}
-      {loading && <div className="text-white">Loading tasks...</div>}
       {error && <div className="text-red-500">Error: {error}</div>}
 
       {/* Main Content */}
       {isAuthenticated && address && !loading && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-in">
           {/* Filter Controls */}
           <div className="flex space-x-4 mb-4">
             <button 
               onClick={() => setFilter('all')}
-              className={`px-4 py-2 rounded ${filter === 'all' ? 'bg-blue-600' : 'bg-gray-700'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                filter === 'all' 
+                  ? 'bg-emerald-600 text-white' 
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
             >
               All Tasks
             </button>
             <button 
               onClick={() => setFilter('rewarded')}
-              className={`px-4 py-2 rounded ${filter === 'rewarded' ? 'bg-blue-600' : 'bg-gray-700'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                filter === 'rewarded' 
+                  ? 'bg-emerald-600 text-white' 
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
             >
               Rewarded
             </button>
             <button 
               onClick={() => setFilter('refused')}
-              className={`px-4 py-2 rounded ${filter === 'refused' ? 'bg-blue-600' : 'bg-gray-700'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                filter === 'refused' 
+                  ? 'bg-emerald-600 text-white' 
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
             >
               Refused
             </button>
@@ -146,15 +228,27 @@ const FinishedTasksPage = () => {
                     </tr>
                   ) : (
                     filteredTasks.map((task) => {
-                      // Find the user's request (first message from user)
-                      const userRequest = task.message_history?.find(msg => 
-                        msg.direction === 'user_to_assistant'
-                      )?.data || 'No request available';
+                      // Get the proposal (message at index 1)
+                      const proposal = task.message_history && task.message_history.length > 1
+                        ? task.message_history[1].data
+                        : 'No proposal available';
                       
-                      // Find the response (last message from assistant)
-                      const assistantResponse = task.message_history
-                        ?.filter(msg => msg.direction === 'assistant_to_user')
-                        ?.pop()?.data || 'No response available';
+                      // For rewarded tasks, find the reward message (typically the last message)
+                      const rewardMessage = task.status === 'rewarded' && task.message_history?.length > 1
+                        ? task.message_history[task.message_history.length - 1].data
+                        : null;
+                      
+                      // For refused tasks, find the refusal message
+                      const refusalMessage = task.status === 'refused' && task.message_history?.length > 1
+                        ? task.message_history[task.message_history.length - 1].data
+                        : null;
+                      
+                      // Display the appropriate message based on task status
+                      const responseToShow = task.status === 'rewarded' && rewardMessage
+                        ? rewardMessage
+                        : task.status === 'refused' && refusalMessage
+                        ? refusalMessage
+                        : 'No response available';
                       
                       return (
                         <tr key={task.id} className="border-b border-gray-800 hover:bg-gray-800/50">
@@ -162,10 +256,10 @@ const FinishedTasksPage = () => {
                             {task.id}
                           </td>
                           <td className="p-4 text-gray-300 align-top max-w-md">
-                            <div className="line-clamp-4">{userRequest}</div>
+                            <div className="line-clamp-4">{proposal}</div>
                           </td>
                           <td className="p-4 text-gray-300 align-top max-w-lg">
-                            <div className="line-clamp-4">{assistantResponse}</div>
+                            <div className="line-clamp-4">{responseToShow}</div>
                           </td>
                           <td className="p-4 text-gray-300 align-top whitespace-nowrap">
                             {task.status === 'rewarded' 

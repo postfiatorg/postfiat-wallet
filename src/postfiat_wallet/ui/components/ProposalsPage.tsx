@@ -367,63 +367,50 @@ const ProposalsPage = () => {
   if (loading) {
     return (
       <div className="space-y-6 animate-fade-in">
-        {/* Skeleton for Task Actions Card */}
+        {/* Filter Controls and Action Buttons Skeleton */}
+        <div className="flex justify-between items-center">
+          <div className="flex space-x-2 overflow-x-auto pb-2">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-10 w-24 bg-slate-800 rounded-lg animate-pulse"></div>
+            ))}
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-28 bg-emerald-600/50 rounded-lg animate-pulse"></div>
+            <div className="h-10 w-24 bg-slate-800 rounded-lg animate-pulse"></div>
+          </div>
+        </div>
+
+        {/* Tasks List Skeleton */}
         <Card className="bg-slate-900 border-slate-800">
           <CardHeader>
             <div className="h-6 w-32 bg-slate-700 rounded animate-pulse"></div>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Task ID Input Skeleton */}
-            <div className="space-y-2">
-              <div className="h-4 w-16 bg-slate-700 rounded animate-pulse"></div>
-              <div className="h-10 w-full bg-slate-800 rounded-lg animate-pulse"></div>
-            </div>
-
-            {/* Task Details Skeleton */}
-            <div className="space-y-2">
-              <div className="h-4 w-24 bg-slate-700 rounded animate-pulse"></div>
-              <div className="h-[200px] w-full bg-slate-800 rounded-lg animate-pulse"></div>
-            </div>
-
-            {/* Action Buttons Skeleton */}
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-3">
-                {[1, 2].map((i) => (
-                  <div key={i} className="h-10 w-full bg-slate-700 rounded-lg animate-pulse"></div>
-                ))}
-              </div>
-              <div className="space-y-3">
-                {[1, 2].map((i) => (
-                  <div key={i} className="h-10 w-full bg-slate-700 rounded-lg animate-pulse"></div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Skeleton for Tasks List */}
-        <Card className="bg-slate-900 border-slate-800">
-          <CardHeader>
-            <div className="h-6 w-24 bg-slate-700 rounded animate-pulse"></div>
-          </CardHeader>
           <CardContent className="max-h-[600px] overflow-y-auto space-y-4">
-            {[1, 2, 3].map((i) => (
+            {[1, 2, 3, 4].map((i) => (
               <div key={i} className="p-4 rounded-lg bg-slate-800/50">
                 <div className="space-y-4">
                   {/* Task Header Skeleton */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="h-4 w-48 bg-slate-700 rounded animate-pulse"></div>
-                      <div className="h-4 w-20 bg-emerald-500/20 rounded-full animate-pulse"></div>
+                      <div className="h-5 w-20 bg-blue-500/10 rounded-full animate-pulse"></div>
                     </div>
-                    <div className="h-6 w-24 bg-slate-700 rounded-full animate-pulse"></div>
+                    <div className="h-7 w-28 bg-slate-700 rounded-full animate-pulse"></div>
                   </div>
 
                   {/* Task Content Skeleton */}
                   <div className="space-y-2">
+                    <div className="h-4 w-full bg-slate-700 rounded animate-pulse"></div>
                     <div className="h-4 w-3/4 bg-slate-700 rounded animate-pulse"></div>
                     <div className="h-4 w-1/2 bg-slate-700 rounded animate-pulse"></div>
-                    <div className="h-3 w-32 bg-slate-700 rounded animate-pulse mt-4"></div>
+                    <div className="h-3 w-32 bg-slate-700 rounded animate-pulse mt-2"></div>
+                  </div>
+                  
+                  {/* Task Actions Skeleton */}
+                  <div className="flex gap-2 mt-3">
+                    <div className="h-7 w-24 bg-emerald-600/50 rounded-lg animate-pulse"></div>
+                    <div className="h-7 w-20 bg-slate-700 rounded-lg animate-pulse"></div>
                   </div>
                 </div>
               </div>

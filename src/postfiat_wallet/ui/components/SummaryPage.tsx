@@ -124,7 +124,28 @@ const SummaryPage = () => {
           }
           
           const data = await response.json();
-          setTasks(data.tasks || []);
+          
+          // Combine tasks from all sections into a single array
+          const allTasks = [
+            ...(data.requested || []),
+            ...(data.proposed || []),
+            ...(data.accepted || []),
+            ...(data.challenged || []),
+            ...(data.completed || []),
+            ...(data.refused || [])
+          ];
+          
+          // Sort tasks by timestamp (extracted from task ID)
+          const parseTimestamp = (id: string): number => {
+            const tsStr = id.split('__')[0];
+            const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+            return new Date(isoTimestamp).getTime();
+          };
+          
+          allTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+          
+          // Take only the most recent tasks (up to 10)
+          setTasks(allTasks.slice(0, 10));
           setTasksError(null);
         } catch (err) {
           console.error("Error fetching tasks:", err);
@@ -232,7 +253,7 @@ const SummaryPage = () => {
   };
 
   // Update the loading state render
-  if (loading) {
+  if (loading || loadingStatus) {
     return (
       <div className="space-y-6 animate-fade-in">
         {/* Skeleton for Balance Cards */}
@@ -262,6 +283,20 @@ const SummaryPage = () => {
                 <div className="h-8 w-8 bg-slate-700 rounded"></div>
               </div>
             ))}
+            
+            {/* PostFiat Status Skeleton */}
+            <div className="border-t border-slate-800 pt-4 mt-4">
+              <div className="h-4 w-32 bg-slate-700 rounded mb-4 animate-pulse"></div>
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4 animate-pulse">
+                  <div className="space-y-2">
+                    <div className="h-4 w-32 bg-slate-700 rounded"></div>
+                    <div className="h-4 w-48 bg-slate-700 rounded"></div>
+                  </div>
+                  <div className="h-8 w-8 bg-slate-700 rounded"></div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -454,12 +489,17 @@ const SummaryPage = () => {
                         <div className="mt-4 pt-4 border-t border-slate-700">
                           <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
                           <div className="space-y-3">
-                            {task.message_history.map((msg: MessageHistoryItem, idx: number) => (
+                            {/* Filter out duplicate messages by creating a unique key from direction + data */}
+                            {Array.from(new Map(
+                              task.message_history.map((msg: MessageHistoryItem) => 
+                                [`${msg.direction}:${msg.data}`, msg]
+                              )
+                            ).values()).map((msg, idx) => (
                               <div key={idx} className="text-sm">
                                 <span className="text-slate-400 font-medium">
-                                  {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
+                                  {(msg as MessageHistoryItem).direction.charAt(0).toUpperCase() + (msg as MessageHistoryItem).direction.slice(1)}:
                                 </span>
-                                <p className="text-slate-300 mt-1 pl-4">{msg.data}</p>
+                                <p className="text-slate-300 mt-1 pl-4">{(msg as MessageHistoryItem).data}</p>
                               </div>
                             ))}
                           </div>

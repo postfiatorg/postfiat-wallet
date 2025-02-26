@@ -112,7 +112,7 @@ export function PaymentModal({
                   <input
                     type="text"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    readOnly
                     className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                               text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                               focus:ring-emerald-500/50 focus:border-emerald-500/50"
@@ -121,7 +121,7 @@ export function PaymentModal({
                   />
                   <select
                     value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
+                    disabled
                     className="px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                               text-slate-200 focus:outline-none focus:ring-2 
                               focus:ring-emerald-500/50 focus:border-emerald-500/50"
@@ -134,7 +134,7 @@ export function PaymentModal({
                 <input
                   type="text"
                   value={toAddress}
-                  onChange={(e) => setToAddress(e.target.value)}
+                  readOnly
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                             text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                             focus:ring-emerald-500/50 focus:border-emerald-500/50"
@@ -145,7 +145,7 @@ export function PaymentModal({
                 <input
                   type="text"
                   value={memoId}
-                  onChange={(e) => setMemoId(e.target.value)}
+                  readOnly
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                             text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                             focus:ring-emerald-500/50 focus:border-emerald-500/50"
@@ -155,7 +155,7 @@ export function PaymentModal({
                 <input
                   type="text"
                   value={memo}
-                  onChange={(e) => setMemo(e.target.value)}
+                  readOnly
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
                             text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
                             focus:ring-emerald-500/50 focus:border-emerald-500/50"

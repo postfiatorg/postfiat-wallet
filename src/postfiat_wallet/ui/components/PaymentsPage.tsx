@@ -171,7 +171,7 @@ const PaymentsPage = () => {
                 />
                 <button 
                   type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition-colors"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-md transition-colors"
                 >
                   Send
                 </button>
@@ -234,7 +234,16 @@ const PaymentsPage = () => {
                     <td className="p-4 text-gray-300 font-mono">
                       {tx.from_address === address ? tx.to_address : tx.from_address}
                     </td>
-                    <td className="p-4 text-gray-300 font-mono">{tx.hash}</td>
+                    <td className="p-4 text-gray-300 font-mono">
+                      <a 
+                        href={`https://livenet.xrpl.org/transactions/${tx.hash}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 hover:underline"
+                      >
+                        {tx.hash.substring(0, 10)}...
+                      </a>
+                    </td>
                   </tr>
                 ))
               )}
