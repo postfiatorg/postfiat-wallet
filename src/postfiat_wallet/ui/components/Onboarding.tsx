@@ -36,12 +36,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
 
   const checkInitStatus = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/account/${address}/status`);
+      // Simple status check without the balance-related logic
+      const response = await fetch(`http://localhost:8000/api/account/${address}/status?refresh=true`);
       const data = await response.json();
-      // Pass the status data to parent handler with the correct property name
-      onCheckStatus({ init_rite_status: data.init_rite_status }); 
+      
+      console.log("Status check result:", data);
+      onCheckStatus({ init_rite_status: data.init_rite_status });
     } catch (error) {
       console.error('Error checking init status:', error);
+      // In case of error, assume UNSTARTED
+      onCheckStatus({ init_rite_status: 'UNSTARTED' });
     }
   };
 
@@ -139,8 +143,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
   }, [address]);
 
   useEffect(() => {
-    // Check status every 10s when pending initiation or needs funding
-    if (initStatus === 'PENDING_INITIATION' || (balance && parseFloat(balance.xrp) <= 0)) {
+    // Check status every 10s when pending initiation
+    if (initStatus === 'PENDING_INITIATION') {
       const intervalId = setInterval(() => {
         checkInitStatus();
         fetchBalance();
@@ -148,7 +152,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
 
       return () => clearInterval(intervalId);
     }
-  }, [initStatus, balance, checkInitStatus]);
+  }, [initStatus, address, onCheckStatus]);
 
   const renderStepContent = () => {
     const xrpBalance = balance ? parseFloat(balance.xrp) : 0;
@@ -434,12 +438,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
 
   // Helper function to determine if onboarding is complete
   const isOnboardingComplete = () => {
-    console.log('Checking completion:', {
-      initStatus,
-      balance,
-      needsFunding: needsFunding()
-    });
-    return ['INITIATED', 'COMPLETE'].includes(initStatus) && !needsFunding();
+    return ['INITIATED', 'COMPLETE'].includes(initStatus);
   };
 
   // Only render main content if onboarding is NOT complete

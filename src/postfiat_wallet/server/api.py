@@ -317,11 +317,14 @@ async def get_account_summary(account: str):
         }
 
 @router.post("/tasks/clear-state/{account}")
-async def clear_task_state(account: str):
-    """Clear all task state for an account when they log out."""
+async def clear_user_state(account: str):
+    """
+    Clear all state related to a specific wallet address when they log out.
+    """
     try:
+        logger.info(f"Clearing state for account: {account}")
         task_storage.clear_user_state(account)
-        return {"status": "success"}
+        return {"status": "success", "message": f"State cleared for {account}"}
     except Exception as e:
         logger.error(f"Error clearing state for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

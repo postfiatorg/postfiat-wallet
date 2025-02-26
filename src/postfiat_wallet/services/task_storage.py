@@ -303,9 +303,12 @@ class TaskStorage:
         if wallet_address in self._last_processed_ledger:
             del self._last_processed_ledger[wallet_address]
         
-        # Clear the user's tasks from state
-        if self._state.node_account:
-            self._state = UserState()  # Create fresh state
+        # Create a completely fresh UserState instead of reusing the existing one
+        self._state = UserState()
+        
+        # Also clear any refresh flags
+        if wallet_address in self._is_refreshing:
+            self._is_refreshing[wallet_address] = False
         
         logger.info(f"State cleared for {wallet_address}")
 

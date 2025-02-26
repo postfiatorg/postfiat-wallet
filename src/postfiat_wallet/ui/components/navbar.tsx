@@ -10,8 +10,7 @@ interface NavbarProps {
 export default function Navbar({ username, onSignOut, activePage, onPageChange }: NavbarProps) {
   const navItems = [
     { label: 'Summary', id: 'summary' },
-    { label: 'Proposals', id: 'proposals' },
-    { label: 'Verification', id: 'verification' },
+    { label: 'Active Tasks', id: 'proposals' },
     { label: 'Finished Tasks', id: 'rewards' },
     { label: 'Payments', id: 'payments' },
     { label: 'Memos', id: 'memos' },

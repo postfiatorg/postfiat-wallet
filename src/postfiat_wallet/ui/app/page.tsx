@@ -45,13 +45,20 @@ export default function Home() {
 
       try {
         console.log('Checking init status for address:', auth.address);
-        const response = await fetch(`http://localhost:8000/api/account/${auth.address}/status`);
-        console.log('Raw response:', response);
+        
+        // Add timestamp to force a fresh fetch
+        const response = await fetch(
+          `http://localhost:8000/api/account/${auth.address}/status?refresh=true&nocache=${Date.now()}`
+        );
         const data = await response.json();
         console.log('Initiation status response:', data);
+        
+        // Simply use the status as returned by the API
         setInitStatus(data.init_rite_status || 'UNSTARTED');
       } catch (error) {
         console.error('Error checking initialization status:', error);
+        // Default to UNSTARTED in case of error
+        setInitStatus('UNSTARTED');
       } finally {
         setIsLoading(false);
       }
@@ -59,9 +66,15 @@ export default function Home() {
 
     if (auth.isAuthenticated) {
       checkInitStatus();
-      // Set up periodic checking
-      const intervalId = setInterval(checkInitStatus, 10000);
+      
+      // Set up periodic checking without the balance checks
+      const intervalId = setInterval(() => {
+        checkInitStatus();
+      }, 10000);
+      
       return () => clearInterval(intervalId);
+    } else {
+      setIsLoading(false);
     }
   }, [auth.isAuthenticated, auth.address]);
 
@@ -78,14 +91,42 @@ export default function Home() {
   };
 
   const handleSignOut = async () => {
+    console.log("Signing out and resetting all state...");
+    
+    // Call the server to clear state for this account
+    if (auth.address) {
+      try {
+        await fetch(`http://localhost:8000/api/tasks/clear-state/${auth.address}`, {
+          method: 'POST'
+        });
+        console.log("Server state cleared for account:", auth.address);
+      } catch (error) {
+        console.error("Error clearing server state:", error);
+      }
+    }
+    
+    // Reset auth state
     setAuth({
       isAuthenticated: false,
       address: null,
       username: null,
       password: null
     });
+    
+    // Reset initStatus state
+    setInitStatus(null);
+    
+    // Reset active page
+    setActivePage('summary');
+    
+    // Clear localStorage
     localStorage.removeItem('wallet_address');
     localStorage.removeItem('username');
+    
+    // Force a re-render by adding a small delay
+    setTimeout(() => {
+      console.log("Sign out complete, state reset");
+    }, 100);
   };
 
   const handlePageChange = (page: string) => {
@@ -101,18 +142,24 @@ export default function Home() {
   }
 
   // Show onboarding UI if not initiated or status is pending
-  if (initStatus && ['UNSTARTED', 'PENDING_INITIATION', 'PENDING'].includes(initStatus)) {
-    return (
-      <AuthProvider value={auth} onClearAuth={handleSignOut}>
-        <Onboarding
-          initStatus={initStatus}
-          address={auth.address!}
-          onCheckStatus={(data) => {
-            setInitStatus(data.init_rite_status);
-          }}
-        />
-      </AuthProvider>
-    );
+  if (initStatus) {
+    // Only show onboarding for these specific statuses
+    const needsOnboarding = ['UNSTARTED', 'PENDING_INITIATION', 'PENDING'].includes(initStatus);
+    
+    // Don't show onboarding for COMPLETE status
+    if (needsOnboarding) {
+      return (
+        <AuthProvider value={auth} onClearAuth={handleSignOut}>
+          <Onboarding
+            initStatus={initStatus}
+            address={auth.address!}
+            onCheckStatus={(data) => {
+              setInitStatus(data.init_rite_status);
+            }}
+          />
+        </AuthProvider>
+      );
+    }
   }
 
   const renderPage = () => {

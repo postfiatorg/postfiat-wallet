@@ -7,6 +7,8 @@ import AcceptTaskModal from './modals/AcceptTaskModal';
 import { RequestTaskModal } from './modals/RequestTaskModal';
 import RefuseTaskModal from './modals/RefuseTaskModal';
 import SubmitVerificationModal from './modals/SubmitVerificationModal';
+import FinalVerificationModal from './modals/FinalVerificationModal';
+import LogPomodoroModal from './modals/LogPomodoroModal';
 
 // Add interface near top of file
 interface MessageHistoryItem {
@@ -21,15 +23,19 @@ const ProposalsPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [showRefused, setShowRefused] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [selectedTaskId, setSelectedTaskId] = useState<string>('');
   const [modalState, setModalState] = useState({
     accept: false,
     request: false,
     refuse: false,
-    verify: false
+    verify: false,
+    finalVerify: false,
+    logPomodoro: false
   });
   const [modalError, setModalError] = useState<string | null>(null);
-  const [taskDetails, setTaskDetails] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>('all');
 
   // Fetch tasks from the API
   const fetchTasks = async () => {
@@ -38,8 +44,14 @@ const ProposalsPage = () => {
       return;
     }
 
+    setIsRefreshing(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
+      // Add artificial delay for better UX
+      const [response] = await Promise.all([
+        fetch(`http://localhost:8000/api/tasks/${address}`),
+        new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
+      ]);
+      
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Failed to fetch tasks: ${text}`);
@@ -51,6 +63,7 @@ const ProposalsPage = () => {
         ...data.requested || [],
         ...data.proposed || [],
         ...data.accepted || [],
+        ...data.challenged || [],
         ...(showRefused ? data.refused || [] : [])
       ];
 
@@ -67,6 +80,7 @@ const ProposalsPage = () => {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -128,13 +142,25 @@ const ProposalsPage = () => {
     });
   };
 
+  const toggleMessageExpansion = (taskId: string) => {
+    setExpandedMessages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId);
+      } else {
+        newSet.add(taskId);
+      }
+      return newSet;
+    });
+  };
+
   const handleTaskClick = (taskId: string) => {
     setSelectedTaskId(taskId);
   };
 
   // Modal handlers
   const handleModalOpen = (modalType: keyof typeof modalState) => {
-    if (modalType !== 'request' && (!selectedTaskId || !tasks.some(task => task.id === selectedTaskId))) {
+    if (modalType !== 'request' && modalType !== 'logPomodoro' && (!selectedTaskId || !tasks.some(task => task.id === selectedTaskId))) {
       setModalError('Please select a valid task first');
       return;
     }
@@ -152,18 +178,21 @@ const ProposalsPage = () => {
     // TODO: Implement accept task API call
     console.log('Accepting task:', taskId, message);
     handleModalClose('accept');
+    await fetchTasks();
   };
 
   const handleRequestTask = async (message: string) => {
     // TODO: Implement request task API call
     console.log('Requesting task:', message);
     handleModalClose('request');
+    await fetchTasks();
   };
 
   const handleRefuseTask = async (taskId: string, reason: string) => {
     // TODO: Implement refuse task API call
     console.log('Refusing task:', taskId, reason);
     handleModalClose('refuse');
+    await fetchTasks();
   };
 
   const handleSubmitVerification = async (taskId: string, details: string) => {
@@ -174,6 +203,164 @@ const ProposalsPage = () => {
       await fetchTasks(); // Refresh the task list
     } catch (error) {
       console.error('Error handling verification submission:', error);
+    }
+  };
+
+  const handleFinalVerification = async (taskId: string, details: string) => {
+    try {
+      console.log('Final verification submitted:', taskId, details);
+      handleModalClose('finalVerify');
+      await fetchTasks();
+    } catch (error) {
+      console.error('Error handling final verification:', error);
+    }
+  };
+
+  const handleLogPomodoro = async (details: string) => {
+    try {
+      console.log('Pomodoro logged:', details);
+      handleModalClose('logPomodoro');
+      await fetchTasks();
+    } catch (error) {
+      console.error('Error logging pomodoro:', error);
+    }
+  };
+
+  // Filter tasks based on active tab
+  const filteredTasks = tasks.filter(task => {
+    if (activeTab === 'all') return true;
+    return task.status === activeTab;
+  });
+
+  // Get the main message to display for a task
+  const getMainMessage = (task: any) => {
+    if (!task.message_history?.length) return "No message available";
+    
+    // For proposed tasks, show the proposal message
+    if (task.status === 'proposed' && task.message_history.length >= 2) {
+      return task.message_history[1].data;
+    }
+    // For accepted tasks, show the acceptance message
+    else if (task.status === 'accepted' && task.message_history.length >= 3) {
+      return task.message_history[2].data;
+    }
+    // For challenged tasks, show the verification message
+    else if (task.status === 'challenged' && task.message_history.length >= 5) {
+      return task.message_history[4].data;
+    }
+    // Default to the first message
+    return task.message_history[0].data;
+  };
+
+  // Truncate text with "Show more" option
+  const truncateText = (text: string, taskId: string) => {
+    const maxLength = 300;
+    if (text.length <= maxLength || expandedMessages.has(taskId)) {
+      return <p className="text-sm text-slate-300">{text}</p>;
+    }
+    
+    return (
+      <div>
+        <p className="text-sm text-slate-300">{text.substring(0, maxLength)}...</p>
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMessageExpansion(taskId);
+          }}
+          className="text-xs text-emerald-400 hover:text-emerald-300 mt-1"
+        >
+          Show more
+        </button>
+      </div>
+    );
+  };
+
+  // Render task action buttons based on status
+  const renderTaskActions = (task: any) => {
+    switch (task.status) {
+      case 'proposed':
+        return (
+          <div className="flex gap-2 mt-3">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('accept');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
+                        text-white rounded-lg transition-colors"
+            >
+              Accept
+            </button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('refuse');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
+                        text-white rounded-lg transition-colors"
+            >
+              Refuse
+            </button>
+          </div>
+        );
+      case 'accepted':
+        return (
+          <div className="flex gap-2 mt-3">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('verify');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
+                        text-white rounded-lg transition-colors"
+            >
+              Submit for Verification
+            </button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('refuse');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
+                        text-white rounded-lg transition-colors"
+            >
+              Refuse
+            </button>
+          </div>
+        );
+      case 'challenged':
+        return (
+          <div className="flex gap-2 mt-3">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('finalVerify');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
+                        text-white rounded-lg transition-colors"
+            >
+              Submit Verification Details
+            </button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTaskId(task.id);
+                handleModalOpen('refuse');
+              }}
+              className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
+                        text-white rounded-lg transition-colors"
+            >
+              Refuse
+            </button>
+          </div>
+        );
+      default:
+        return null;
     }
   };
 
@@ -279,115 +466,107 @@ const ProposalsPage = () => {
               </div>
             )}
 
-            {/* Input Section */}
-            <Card className="bg-slate-900 border-slate-800">
-              <CardHeader>
-                <CardTitle className="text-lg font-semibold text-white">Task Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Task ID Input */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-400">Task ID</label>
-                  <input
-                    type="text"
-                    value={selectedTaskId}
-                    onChange={(e) => setSelectedTaskId(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg 
-                              text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
-                              focus:ring-emerald-500/50 focus:border-emerald-500/50"
-                    placeholder="Enter task ID"
-                  />
-                </div>
-
-                {/* Task Details */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-400">Task Details</label>
-                  <textarea
-                    value={taskDetails}
-                    onChange={(e) => setTaskDetails(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg 
-                              text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 
-                              focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
-                    placeholder="Enter task details"
-                  />
-                </div>
-
-                {/* Action Buttons */}
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-3">
-                    <button 
-                      onClick={() => handleModalOpen('request')}
-                      className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
-                               text-white rounded-lg transition-colors text-sm font-medium"
-                    >
-                      Request Task
-                    </button>
-                    <button 
-                      onClick={() => handleModalOpen('refuse')}
-                      className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                               text-white rounded-lg transition-colors text-sm font-medium"
-                    >
-                      Refuse Task
-                    </button>
-                  </div>
-                  <div className="space-y-3">
-                    <button 
-                      onClick={() => handleModalOpen('accept')}
-                      className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 
-                               text-white rounded-lg transition-colors text-sm font-medium"
-                    >
-                      Accept Task
-                    </button>
-                    <button 
-                      onClick={() => handleModalOpen('verify')}
-                      className="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 
-                               text-white rounded-lg transition-colors text-sm font-medium"
-                    >
-                      Submit for Verification
-                    </button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Filter Controls */}
-            <div className="flex justify-end">
-              <label className="flex items-center gap-2 text-sm text-slate-400">
-                <input
-                  type="checkbox"
-                  checked={showRefused}
-                  onChange={(e) => setShowRefused(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500"
-                />
-                Show Refused Tasks
-              </label>
+            {/* Filter Controls and Action Buttons */}
+            <div className="flex justify-between items-center">
+              <div className="flex space-x-2 overflow-x-auto pb-2">
+                <button
+                  onClick={() => setActiveTab('all')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'all' 
+                      ? 'bg-emerald-600 text-white' 
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  All Tasks
+                </button>
+                <button
+                  onClick={() => setActiveTab('proposed')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'proposed' 
+                      ? 'bg-emerald-600 text-white' 
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Proposed
+                </button>
+                <button
+                  onClick={() => setActiveTab('accepted')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'accepted' 
+                      ? 'bg-emerald-600 text-white' 
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Accepted
+                </button>
+                <button
+                  onClick={() => setActiveTab('challenged')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'challenged' 
+                      ? 'bg-emerald-600 text-white' 
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Verification
+                </button>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => handleModalOpen('request')}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 
+                           text-white rounded-lg transition-colors text-sm font-medium"
+                >
+                  Request Task
+                </button>
+                <button 
+                  onClick={() => fetchTasks()}
+                  disabled={isRefreshing}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 
+                            text-white rounded-lg transition-all duration-200 text-sm font-medium
+                            disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isRefreshing ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle 
+                          className="opacity-25" 
+                          cx="12" 
+                          cy="12" 
+                          r="10" 
+                          stroke="currentColor" 
+                          strokeWidth="4"
+                          fill="none"
+                        />
+                        <path 
+                          className="opacity-75" 
+                          fill="currentColor" 
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        />
+                      </svg>
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    'Update'
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Tasks List */}
             <Card className="bg-slate-900 border-slate-800">
               <CardHeader>
-                <CardTitle className="text-lg font-semibold text-white">Tasks</CardTitle>
+                <CardTitle className="text-lg font-semibold text-white">Active Tasks</CardTitle>
               </CardHeader>
               <CardContent className="max-h-[600px] overflow-y-auto">
-                {tasks.length === 0 ? (
+                {filteredTasks.length === 0 ? (
                   <div className="text-slate-500">No tasks available.</div>
                 ) : (
                   <div className="space-y-4">
-                    {tasks.map((task) => {
+                    {filteredTasks.map((task) => {
                       const tsStr = task.id.split('__')[0];
                       const displayTs = tsStr.replace('_', ' ');
-
-                      // Determine which message to show based on status
-                      let mainMessage = "No message available";
-                      if (task.message_history?.length > 0) {
-                        if (task.status === 'accepted' && task.message_history.length >= 3) {
-                          mainMessage = task.message_history[2].data;
-                        } else if (task.status === 'proposed' && task.message_history.length >= 2) {
-                          mainMessage = task.message_history[1].data;
-                        } else {
-                          mainMessage = task.message_history[0].data;
-                        }
-                      }
+                      const mainMessage = getMainMessage(task);
 
                       return (
                         <div 
@@ -407,6 +586,8 @@ const ProposalsPage = () => {
                                     ? 'bg-yellow-500/10 text-yellow-400'
                                     : task.status === 'proposed'
                                     ? 'bg-blue-500/10 text-blue-400'
+                                    : task.status === 'challenged'
+                                    ? 'bg-purple-500/10 text-purple-400'
                                     : 'bg-red-500/10 text-red-400'
                                 }`}>
                                   {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
@@ -426,21 +607,29 @@ const ProposalsPage = () => {
 
                             {/* Main Message */}
                             <div>
-                              <p className="text-sm text-slate-300">{mainMessage}</p>
+                              {truncateText(mainMessage, task.id)}
                               <p className="text-xs text-slate-500 mt-2">{displayTs}</p>
                             </div>
+                            
+                            {/* Task Action Buttons */}
+                            {renderTaskActions(task)}
                             
                             {/* Message History Expansion */}
                             {expandedTasks.has(task.id) && task.message_history && (
                               <div className="mt-4 pt-4 border-t border-slate-700">
                                 <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
                                 <div className="space-y-3">
-                                  {task.message_history.map((msg: MessageHistoryItem, idx: number) => (
+                                  {/* Filter out duplicate messages by creating a unique key from direction + data */}
+                                  {Array.from(new Map(
+                                    task.message_history.map((msg: MessageHistoryItem) => 
+                                      [`${msg.direction}:${msg.data}`, msg]
+                                    )
+                                  ).values()).map((msg, idx) => (
                                     <div key={idx} className="text-sm">
                                       <span className="text-slate-400 font-medium">
-                                        {msg.direction.charAt(0).toUpperCase() + msg.direction.slice(1)}:
+                                        {(msg as MessageHistoryItem).direction}:
                                       </span>
-                                      <p className="text-slate-300 mt-1 pl-4">{msg.data}</p>
+                                      <p className="text-slate-300 mt-1 pl-4">{(msg as MessageHistoryItem).data}</p>
                                     </div>
                                   ))}
                                 </div>
@@ -462,18 +651,16 @@ const ProposalsPage = () => {
               taskId={selectedTaskId}
               onAccept={(taskId, message) => {
                 handleAcceptTask(taskId, message);
-                setTaskDetails('');
               }}
-              initialMessage={taskDetails}
+              initialMessage=""
             />
             <RequestTaskModal
               isOpen={modalState.request}
               onClose={() => handleModalClose('request')}
               onRequest={(message) => {
                 handleRequestTask(message);
-                setTaskDetails('');
               }}
-              initialMessage={taskDetails}
+              initialMessage=""
             />
             <RefuseTaskModal
               isOpen={modalState.refuse}
@@ -481,9 +668,8 @@ const ProposalsPage = () => {
               taskId={selectedTaskId}
               onRefuse={(taskId, reason) => {
                 handleRefuseTask(taskId, reason);
-                setTaskDetails('');
               }}
-              initialReason={taskDetails}
+              initialReason=""
             />
             <SubmitVerificationModal
               isOpen={modalState.verify}
@@ -491,9 +677,23 @@ const ProposalsPage = () => {
               taskId={selectedTaskId}
               onSubmit={(taskId, details) => {
                 handleSubmitVerification(taskId, details);
-                setTaskDetails('');
               }}
-              initialDetails={taskDetails}
+              initialDetails=""
+            />
+            <FinalVerificationModal
+              isOpen={modalState.finalVerify}
+              onClose={() => handleModalClose('finalVerify')}
+              taskId={selectedTaskId}
+              onSubmit={(taskId, details) => {
+                handleFinalVerification(taskId, details);
+              }}
+              initialDetails=""
+            />
+            <LogPomodoroModal
+              isOpen={modalState.logPomodoro}
+              onClose={() => handleModalClose('logPomodoro')}
+              onSubmit={handleLogPomodoro}
+              initialDetails=""
             />
           </>
         )}
