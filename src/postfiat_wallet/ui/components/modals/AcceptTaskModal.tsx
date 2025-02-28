@@ -108,7 +108,13 @@ const AcceptTaskModal = ({ isOpen, onClose, taskId, onAccept, initialMessage }: 
                             focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[100px]"
                   placeholder="Enter your acceptance message..."
                   required
+                  maxLength={1000}
                 />
+                <div className="flex justify-end">
+                  <span className={`text-xs ${message.length >= 950 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    {message.length}/1000
+                  </span>
+                </div>
               </div>
 
               {error && (

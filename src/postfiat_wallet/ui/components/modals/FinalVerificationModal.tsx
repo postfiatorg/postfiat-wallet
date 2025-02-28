@@ -127,7 +127,13 @@ const FinalVerificationModal = ({
                             focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[200px]"
                   placeholder="Enter your verification response..."
                   required
+                  maxLength={1000}
                 />
+                <div className="flex justify-end">
+                  <span className={`text-xs ${details.length >= 950 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    {details.length}/1000
+                  </span>
+                </div>
               </div>
 
               {error && (

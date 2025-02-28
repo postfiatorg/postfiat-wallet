@@ -102,7 +102,13 @@ export function RequestTaskModal({ isOpen, onClose, onRequest, initialMessage }:
                             focus:ring-emerald-500/50 focus:border-emerald-500/50"
                   placeholder="Enter your task request..."
                   required
+                  maxLength={1000}
                 />
+                <div className="flex justify-end">
+                  <span className={`text-xs ${message.length >= 950 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    {message.length}/1000
+                  </span>
+                </div>
               </div>
 
               {error && (

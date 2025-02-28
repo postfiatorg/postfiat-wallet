@@ -108,7 +108,13 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
                             focus:ring-emerald-500/50 focus:border-emerald-500/50 min-h-[100px]"
                   placeholder="Enter reason for refusing the task..."
                   required
+                  maxLength={1000}
                 />
+                <div className="flex justify-end">
+                  <span className={`text-xs ${reason.length >= 950 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    {reason.length}/1000
+                  </span>
+                </div>
               </div>
 
               {error && (
