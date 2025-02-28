@@ -31,7 +31,8 @@ const ProposalsPage = () => {
     refuse: false,
     verify: false,
     finalVerify: false,
-    logPomodoro: false
+    logPomodoro: false,
+    verificationPrompt: ''
   });
   const [modalError, setModalError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -165,7 +166,21 @@ const ProposalsPage = () => {
       return;
     }
     setModalError(null);
-    setModalState({ ...modalState, [modalType]: true });
+    
+    // Get verification prompt for the selected task if opening verification modal
+    let verificationPrompt = '';
+    if (modalType === 'verify' || modalType === 'finalVerify') {
+      const selectedTask = tasks.find(task => task.id === selectedTaskId);
+      if (selectedTask?.message_history?.length >= 5) {
+        verificationPrompt = selectedTask.message_history[4].data;
+      }
+    }
+    
+    setModalState({ 
+      ...modalState, 
+      [modalType]: true,
+      verificationPrompt: verificationPrompt
+    });
   };
 
   const handleModalClose = (modalType: keyof typeof modalState) => {
@@ -675,6 +690,7 @@ const ProposalsPage = () => {
                 handleFinalVerification(taskId, details);
               }}
               initialDetails=""
+              verificationPrompt={modalState.verificationPrompt}
             />
             <LogPomodoroModal
               isOpen={modalState.logPomodoro}

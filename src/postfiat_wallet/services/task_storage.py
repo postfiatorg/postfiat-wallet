@@ -9,6 +9,8 @@ from postfiat_wallet.config import settings
 from pathlib import Path
 import logging
 import asyncio
+import json
+from datetime import datetime
 
 from postfiat.nodes.task.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
 from postfiat.nodes.task.codecs.v0.task import decode_account_txn
@@ -37,7 +39,7 @@ class TaskStorage:
         """
         # Prepare local caching directory
         cache_dir = Path(settings.PATHS["cache_dir"]) / "tasknode"
-        logger.info(f"TaskNode cache location: {cache_dir.resolve()}")
+        logger.debug(f"TaskNode cache location: {cache_dir.resolve()}")
 
         # Create the client that fetches & caches XRPL transactions
         self.client = CachingRpcClient(
@@ -69,7 +71,7 @@ class TaskStorage:
         Fetches all existing transactions/messages for the user from the earliest ledger
         to the latest, updating the state.
         """
-        logger.info(f"Initializing state for {wallet_address}")
+        logger.debug(f"Initializing state for {wallet_address}")
 
         start_ledger = EARLIEST_LEDGER_SEQ
         end_ledger = -1
@@ -81,42 +83,26 @@ class TaskStorage:
             # Fetch transactions only once
             txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
             
-            logger.info(f"Starting to fetch messages for {wallet_address} from ledger {start_ledger}")
-            
             # Decode the transactions using both decoders
             task_stream = decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS)
             
             async for msg in task_stream:
-                logger.debug(f"Processing message: {msg}")
                 self._state.update(msg)
                 newest_ledger_seen = msg.ledger_seq
                 message_count += 1
-                
-                if self._state.node_account:
-                    logger.debug(f"Current task count: {len(self._state.node_account.tasks)}")
 
             # Store the last processed ledger
             if newest_ledger_seen is not None:
                 self._last_processed_ledger[wallet_address] = newest_ledger_seen
-                logger.info(f"Processed {message_count} messages, newest ledger: {newest_ledger_seen}")
+                logger.debug(f"Processed {message_count} messages, newest ledger: {newest_ledger_seen}")
             else:
                 # If no messages found, at least set them to the earliest ledger
                 self._last_processed_ledger[wallet_address] = start_ledger
-                logger.info("No messages found during initialization")
-
-            # Log final state
-            if self._state.node_account:
-                logger.info(f"Final task count: {len(self._state.node_account.tasks)}")
-                logger.info(f"Task IDs: {list(self._state.node_account.tasks.keys())}")
-            else:
-                logger.warning("No node_account in state after initialization")
+                logger.debug("No messages found during initialization")
 
         except Exception as e:
             logger.error(f"Error during initialization: {str(e)}", exc_info=True)
             raise
-
-        logger.info(f"Initialization complete for {wallet_address}. Last processed ledger: "
-                    f"{self._last_processed_ledger[wallet_address]}")
 
     async def start_refresh_loop(self, wallet_address: str) -> None:
         """
@@ -128,7 +114,7 @@ class TaskStorage:
             logger.debug(f"Refresh loop is already running for {wallet_address}")
             return
 
-        logger.info(f"Starting refresh loop for {wallet_address}")
+        logger.debug(f"Starting refresh loop for {wallet_address}")
         self._is_refreshing[wallet_address] = True
 
         async def _refresh():
@@ -160,7 +146,6 @@ class TaskStorage:
                     ):
                         self._state.update(msg)
                         self._last_processed_ledger[wallet_address] = msg.ledger_seq
-                        logger.debug(f"Updated state with message from ledger {msg.ledger_seq}")
 
                     # Sleep 30s between polls
                     await asyncio.sleep(30)
@@ -173,7 +158,7 @@ class TaskStorage:
                     # Wait 5s to avoid infinite spin if there's an error
                     await asyncio.sleep(5)
 
-            logger.info(f"Exiting refresh loop for {wallet_address}")
+            logger.debug(f"Exiting refresh loop for {wallet_address}")
 
         # Start the refresh loop as a Task
         self._refresh_tasks[wallet_address] = asyncio.create_task(_refresh())
@@ -182,16 +167,13 @@ class TaskStorage:
         """
         Stops the background refresh loop for the specified wallet address if it exists.
         """
-        logger.info(f"Stopping refresh loop for {wallet_address}")
+        logger.debug(f"Stopping refresh loop for {wallet_address}")
         if wallet_address in self._is_refreshing:
             self._is_refreshing[wallet_address] = False
 
         if wallet_address in self._refresh_tasks:
             self._refresh_tasks[wallet_address].cancel()
             del self._refresh_tasks[wallet_address]
-
-        # We typically keep the last processed ledger so that if they re-enable
-        # the refresh loop, it picks up from where it left off.
 
     async def get_user_tasks(
         self, 
@@ -237,42 +219,107 @@ class TaskStorage:
         Return tasks from in-memory state for the specified wallet, optionally filtered
         by TaskStatus.
         """
-        logger.info(f"Getting tasks by state for {wallet_address} (status filter: {status})")
+        logger.debug(f"Getting tasks by state for {wallet_address} (status filter: {status})")
         
         # Ensure we have initialized state
         if not self._state.node_account or wallet_address not in self._last_processed_ledger:
-            logger.info(f"State not initialized for {wallet_address}, initializing now")
+            logger.debug(f"State not initialized for {wallet_address}, initializing now")
             await self.initialize_user_tasks(wallet_address)
         
         # Grab the user's in-memory AccountState
         account_state = self._state.node_account
         if not account_state: 
-            logger.warning(f"No AccountState found for {wallet_address} after initialization")
+            logger.debug(f"No AccountState found for {wallet_address} after initialization")
             return []
 
         # Log the available tasks
-        logger.info(f"Found {len(account_state.tasks)} tasks in account state")
-        if account_state.tasks:
-            logger.info(f"Task IDs: {list(account_state.tasks.keys())}")
+        logger.debug(f"Found {len(account_state.tasks)} tasks in account state")
         
         # Filter tasks if a status is specified
         tasks = []
         for task_id, tstate in account_state.tasks.items():
             if status is None or tstate.status == status:
-                logger.debug(f"Including task {task_id} with status {tstate.status}")
-                tasks.append({
+                # Handle message history with updated SDK structure
+                message_history = []
+                
+                # Check first message to understand format
+                if tstate.message_history and len(tstate.message_history) > 0:
+                    sample_msg = tstate.message_history[0]
+                    
+                    # Log structure of the message history item for debugging
+                    if len(tasks) == 0:  # Only log for first task
+                        logger.debug(f"Message history item type: {type(sample_msg)}")
+                        if hasattr(sample_msg, 'timestamp'):
+                            logger.debug(f"Sample message timestamp: {sample_msg.timestamp}")
+                        if hasattr(sample_msg, 'direction'):
+                            logger.debug(f"Sample message direction: {sample_msg.direction}")
+                        if hasattr(sample_msg, 'raw_data'):
+                            logger.debug(f"Sample message has raw_data attribute")
+                
+                # Process all messages in the history
+                for msg_item in tstate.message_history:
+                    try:
+                        # New SDK format (each message_history item is a tuple of (timestamp, direction, raw_data))
+                        if isinstance(msg_item, tuple):
+                            if len(msg_item) == 3:  # New format: (timestamp, direction, raw_data)
+                                timestamp, direction, raw_data = msg_item
+                                message_history.append({
+                                    "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+                                    "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
+                                    "data": raw_data
+                                })
+                            elif len(msg_item) == 2:  # Old format: (direction, data)
+                                direction, data = msg_item
+                                message_history.append({
+                                    "timestamp": None,
+                                    "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
+                                    "data": data
+                                })
+                        # Object-based format
+                        elif hasattr(msg_item, "direction") and (hasattr(msg_item, "raw_data") or hasattr(msg_item, "data")):
+                            direction = msg_item.direction
+                            data = getattr(msg_item, "raw_data", None) or getattr(msg_item, "data", "")
+                            timestamp = getattr(msg_item, "timestamp", None)
+                            
+                            message_history.append({
+                                "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else 
+                                            (str(timestamp) if timestamp else None),
+                                "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
+                                "data": data
+                            })
+                        else:
+                            # Fallback for unknown formats
+                            message_history.append({
+                                "timestamp": None,
+                                "direction": "unknown",
+                                "data": str(msg_item)
+                            })
+                    except Exception as e:
+                        logger.error(f"Error processing message history item: {e}", exc_info=True)
+                        message_history.append({
+                            "timestamp": None,
+                            "direction": "error",
+                            "data": f"Error processing message item: {str(e)}"
+                        })
+                
+                # Build the task object
+                task_dict = {
                     "id": task_id,
                     "status": tstate.status.name.lower(),
                     "pft_offered": str(tstate.pft_offered) if tstate.pft_offered else None,
                     "pft_rewarded": str(tstate.pft_rewarded) if tstate.pft_rewarded else None,
-                    "message_history": [
-                        {"direction": direction.name.lower(), "data": data}
-                        for direction, data in tstate.message_history
-                    ],
-                    "timestamp": None,
-                })
+                    "message_history": message_history,
+                    "task_request": tstate.task_request,
+                    "task_statement": tstate.task_statement,
+                    "completion_statement": tstate.completion_statement,
+                    "challenge_statement": tstate.challenge_statement,
+                    "challenge_response": tstate.challenge_response,
+                    "timestamp": None,  # Legacy field
+                }
+                
+                tasks.append(task_dict)
 
-        logger.info(f"Returning {len(tasks)} tasks after filtering")
+        logger.debug(f"Returning {len(tasks)} tasks after filtering")
         return tasks
 
     async def get_tasks_by_ui_section(self, wallet_address: str) -> Dict[str, List[dict]]:
@@ -294,7 +341,7 @@ class TaskStorage:
         """
         Clear all state related to a specific wallet address when they log out.
         """
-        logger.info(f"Clearing state for {wallet_address}")
+        logger.debug(f"Clearing state for {wallet_address}")
         
         # Stop any running refresh loop
         self.stop_refresh_loop(wallet_address)
@@ -310,7 +357,7 @@ class TaskStorage:
         if wallet_address in self._is_refreshing:
             self._is_refreshing[wallet_address] = False
         
-        logger.info(f"State cleared for {wallet_address}")
+        logger.debug(f"State cleared for {wallet_address}")
 
     async def get_user_payments(
         self,
@@ -376,7 +423,7 @@ class TaskStorage:
         Get account status information including initiation rite status,
         context document link, and blacklist status.
         """
-        logger.info(f"Fetching account status for {wallet_address}")
+        logger.debug(f"Fetching account status for {wallet_address}")
         
         if not self._state.node_account:
             return {
@@ -390,3 +437,32 @@ class TaskStorage:
             "context_doc_link": self._state.node_account.context_doc_link,
             "is_blacklisted": self._state.node_account.is_blacklisted
         }
+
+    async def get_user_node_messages(self, user_account: str, node_account: str):
+        """
+        Get all messages between a user and a specific node
+        
+        Args:
+            user_account: User account address
+            node_account: Node account address
+            
+        Returns:
+            List of messages between the user and node
+        """
+        # Make sure we have the latest transactions
+        await self.initialize_user_tasks(user_account)
+        
+        messages = []
+        
+        # Collect all transactions between user and node account
+        for tx in self._user_transactions.get(user_account, []):
+            # Check if this transaction is between user and node
+            if (tx.from_address == user_account and tx.to_address == node_account) or \
+               (tx.from_address == node_account and tx.to_address == user_account):
+                # If this was a message, it will have been decoded already
+                if hasattr(tx, 'decoded_message') and tx.decoded_message:
+                    messages.append(tx.decoded_message)
+                
+        return messages
+    
+

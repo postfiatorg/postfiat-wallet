@@ -24,6 +24,7 @@ const VerificationPage = () => {
   const [verificationDetails, setVerificationDetails] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
+  const [verificationPrompt, setVerificationPrompt] = useState<string>('');
 
   // Fetch tasks from the API
   const fetchTasks = async () => {
@@ -75,6 +76,11 @@ const VerificationPage = () => {
 
     return () => clearInterval(intervalId);
   }, [isAuthenticated, address]);
+
+  useEffect(() => {
+    // Set a default verification prompt or fetch it if needed
+    setVerificationPrompt('Please provide verification details for this task.');
+  }, []);
 
   const toggleTaskExpansion = (taskId: string) => {
     setExpandedTasks(prev => {
@@ -282,6 +288,7 @@ const VerificationPage = () => {
           setVerificationDetails(''); // Clear the input after submission
         }}
         initialDetails={verificationDetails}
+        verificationPrompt={verificationPrompt}
       />
 
       <RefuseTaskModal

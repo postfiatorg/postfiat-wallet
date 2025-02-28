@@ -8,9 +8,17 @@ interface FinalVerificationModalProps {
   taskId: string;
   onSubmit: (taskId: string, details: string) => void;
   initialDetails: string;
+  verificationPrompt: string;
 }
 
-const FinalVerificationModal = ({ isOpen, onClose, taskId, onSubmit, initialDetails }: FinalVerificationModalProps) => {
+const FinalVerificationModal = ({ 
+  isOpen, 
+  onClose, 
+  taskId, 
+  onSubmit, 
+  initialDetails,
+  verificationPrompt 
+}: FinalVerificationModalProps) => {
   const [details, setDetails] = useState(initialDetails);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -98,6 +106,17 @@ const FinalVerificationModal = ({ isOpen, onClose, taskId, onSubmit, initialDeta
                             text-slate-200 placeholder-slate-500"
                 />
               </div>
+              
+              {verificationPrompt && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-400">Verification Prompt</label>
+                  <div className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg 
+                              text-slate-300 text-sm max-h-[150px] overflow-y-auto">
+                    {verificationPrompt}
+                  </div>
+                </div>
+              )}
+              
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-400">Verification Response</label>
                 <textarea

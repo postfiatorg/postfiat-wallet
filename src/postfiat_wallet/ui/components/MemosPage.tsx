@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { PasswordConfirmModal } from './modals/PasswordConfirmModal';
 
 interface Message {
   id: string;
@@ -24,6 +25,15 @@ interface MemosPageProps {
 const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const auth = useContext(AuthContext);
   const ODV_ADDRESS = 'rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn';
+  const [activeMode, setActiveMode] = useState<'odv' | 'logging'>('odv');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Password modal state
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | undefined>();
+  const [pendingAction, setPendingAction] = useState<'sendMessage' | 'sendLog' | null>(null);
 
   const [threads, setThreads] = useState<Thread[]>([
     {
@@ -50,20 +60,251 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   ]);
   const [newMessage, setNewMessage] = useState('');
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !selectedThread) return;
+  // Fetch messages from API
+  const fetchMessages = async () => {
+    if (!address) return;
     
-    const newMsg: Message = {
-      id: Date.now().toString(),
-      from: address,
-      to: selectedThread,
-      content: newMessage.trim(),
-      timestamp: Date.now()
-    };
-    
-    setMessages(prev => [...prev, newMsg]);
-    setNewMessage('');
+    setIsRefreshing(true);
+    try {
+      // Add artificial delay for better UX
+      const [response] = await Promise.all([
+        fetch(`http://localhost:8000/api/odv/messages/${address}`),
+        new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
+      ]);
+      
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to fetch messages: ${text}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        // Transform API messages to our format
+        const apiMessages = data.messages.map((msg: any) => ({
+          id: msg.id,
+          from: msg.from,
+          to: msg.to,
+          content: msg.content,
+          timestamp: msg.timestamp
+        }));
+        
+        setMessages(apiMessages);
+        
+        // Update thread with last message if we have any
+        if (apiMessages.length > 0) {
+          const lastMsg = apiMessages[apiMessages.length - 1];
+          setThreads(prev => prev.map(thread => 
+            thread.address === ODV_ADDRESS 
+              ? { 
+                  ...thread, 
+                  lastMessage: lastMsg.content, 
+                  timestamp: lastMsg.timestamp,
+                  unread: 0
+                }
+              : thread
+          ));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   };
+  
+  // Handle password confirmation
+  const handlePasswordConfirm = async (password: string) => {
+    if (pendingAction === 'sendMessage') {
+      await executeSendMessage(password);
+    } else if (pendingAction === 'sendLog') {
+      await executeSendLog(password);
+    }
+    setShowPasswordModal(false);
+    setPendingAction(null);
+  };
+  
+  // Execute sending message with confirmed password
+  const executeSendMessage = async (password: string) => {
+    if (!newMessage.trim() || !address) {
+      setError('Please enter a message');
+      return;
+    }
+    
+    setIsLoading(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/odv/send_message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account: address,
+          password: password,
+          message: newMessage.trim(),
+          amount_pft: 0 // Default to 0 PFT
+        }),
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to send message: ${text}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        // Add message to UI immediately (optimistic update)
+        const newMsg: Message = {
+          id: data.message_id,
+          from: address,
+          to: ODV_ADDRESS,
+          content: newMessage.trim(),
+          timestamp: Date.now()
+        };
+        
+        setMessages(prev => [...prev, newMsg]);
+        setNewMessage('');
+        
+        // Update thread with last message
+        setThreads(prev => prev.map(thread => 
+          thread.address === ODV_ADDRESS 
+            ? { 
+                ...thread, 
+                lastMessage: newMessage.trim(), 
+                timestamp: Date.now(),
+                unread: 0
+              }
+            : thread
+        ));
+        
+        // Schedule a refresh after a few seconds to get response
+        setTimeout(() => {
+          fetchMessages();
+        }, 5000);
+      }
+    } catch (err) {
+      console.error('Error sending message:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      setPasswordError(err instanceof Error ? err.message : 'Failed to send message');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Execute sending log with confirmed password
+  const executeSendLog = async (password: string) => {
+    if (!newMessage.trim() || !address) {
+      setError('Please enter a log message');
+      return;
+    }
+    
+    setIsLoading(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/odv/send_log', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account: address,
+          password: password,
+          log_content: newMessage.trim(),
+          amount_pft: 0 // Default to 0 PFT
+        }),
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to send log entry: ${text}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        // Add message to UI immediately (optimistic update)
+        const newMsg: Message = {
+          id: data.log_id,
+          from: address,
+          to: ODV_ADDRESS,
+          content: newMessage.trim(),
+          timestamp: Date.now()
+        };
+        
+        setMessages(prev => [...prev, newMsg]);
+        setNewMessage('');
+        
+        // Update thread with last message
+        setThreads(prev => prev.map(thread => 
+          thread.address === ODV_ADDRESS 
+            ? { 
+                ...thread, 
+                lastMessage: `Log: ${newMessage.trim()}`, 
+                timestamp: Date.now(),
+                unread: 0
+              }
+            : thread
+        ));
+      }
+    } catch (err) {
+      console.error('Error sending log entry:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      setPasswordError(err instanceof Error ? err.message : 'Failed to send log entry');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Prepare to send message (show password modal)
+  const sendMessageToODV = () => {
+    if (!newMessage.trim()) {
+      setError('Please enter a message');
+      return;
+    }
+    
+    setPendingAction('sendMessage');
+    setPasswordError(undefined);
+    setShowPasswordModal(true);
+  };
+
+  // Prepare to send log (show password modal)
+  const sendLogEntry = () => {
+    if (!newMessage.trim()) {
+      setError('Please enter a log message');
+      return;
+    }
+    
+    setPendingAction('sendLog');
+    setPasswordError(undefined);
+    setShowPasswordModal(true);
+  };
+
+  // Update the handleSendMessage function to handle both modes
+  const handleSendMessage = () => {
+    if (activeMode === 'odv') {
+      sendMessageToODV();
+    } else if (activeMode === 'logging') {
+      sendLogEntry();
+    }
+  };
+  
+  // Add periodic refresh (every 30 seconds)
+  useEffect(() => {
+    if (!address) return;
+
+    // Initial fetch
+    fetchMessages();
+    
+    // Set up periodic refresh
+    const intervalId = setInterval(() => {
+      fetchMessages();
+    }, 30000); // 30 seconds
+    
+    // Clean up on unmount
+    return () => clearInterval(intervalId);
+  }, [address]);
 
   const handleInfoClick = (thread: Thread, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -87,44 +328,85 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     <>
       <div className="flex h-[calc(100vh-120px)]">
         {/* Threads sidebar */}
-        <div className="w-1/4 border-r border-slate-700 overflow-y-auto">
-          {threads.map((thread) => (
-            <div
-              key={thread.address}
-              onClick={() => setSelectedThread(thread.address)}
-              className={`p-4 cursor-pointer hover:bg-slate-800 relative ${
-                selectedThread === thread.address ? 'bg-slate-800' : ''
-              }`}
-            >
-              <div className="flex justify-between items-center">
-                <div className="font-medium text-slate-200">{thread.displayName}</div>
-                <button
-                  onClick={(e) => handleInfoClick(thread, e)}
-                  className="text-slate-400 hover:text-slate-200 p-1 opacity-60 hover:opacity-100 transition-opacity"
-                >
-                  <svg 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    viewBox="0 0 24 24" 
-                    fill="currentColor" 
-                    className="w-4 h-4"
+        <div className="w-1/4 border-r border-slate-700 overflow-y-auto flex flex-col">
+          <div className="flex-1 overflow-y-auto">
+            {threads.map((thread) => (
+              <div
+                key={thread.address}
+                onClick={() => setSelectedThread(thread.address)}
+                className={`p-4 cursor-pointer hover:bg-slate-800 relative ${
+                  selectedThread === thread.address ? 'bg-slate-800' : ''
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div className="font-medium text-slate-200">{thread.displayName}</div>
+                  <button
+                    onClick={(e) => handleInfoClick(thread, e)}
+                    className="text-slate-400 hover:text-slate-200 p-1 opacity-60 hover:opacity-100 transition-opacity"
                   >
-                    <path 
-                      fillRule="evenodd" 
-                      d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 01.67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 11-.671-1.34l.041-.022zM12 9a.75.75 0 100-1.5.75.75 0 000 1.5z" 
-                      clipRule="evenodd" 
-                    />
-                  </svg>
-                </button>
+                    <svg 
+                      xmlns="http://www.w3.org/2000/svg" 
+                      viewBox="0 0 24 24" 
+                      fill="currentColor" 
+                      className="w-4 h-4"
+                    >
+                      <path 
+                        fillRule="evenodd" 
+                        d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 01.67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 11-.671-1.34l.041-.022zM12 9a.75.75 0 100-1.5.75.75 0 000 1.5z" 
+                        clipRule="evenodd" 
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div className="text-sm text-slate-400 truncate">{thread.lastMessage}</div>
               </div>
-              <div className="text-sm text-slate-400 truncate">{thread.lastMessage}</div>
+            ))}
+          </div>
+          
+          {/* Mode toggle - both options visible */}
+          <div className="border-t border-slate-700 p-4">
+            <div className="flex rounded-lg overflow-hidden">
+              <button
+                onClick={() => setActiveMode('odv')}
+                className={`flex-1 py-2 px-3 flex justify-center items-center transition-colors ${
+                  activeMode === 'odv' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                ODV Chat
+              </button>
+              <button
+                onClick={() => setActiveMode('logging')}
+                className={`flex-1 py-2 px-3 flex justify-center items-center transition-colors ${
+                  activeMode === 'logging' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                Logging
+              </button>
             </div>
-          ))}
+          </div>
         </div>
 
         {/* Messages area */}
         <div className="flex-1 flex flex-col">
           {selectedThread ? (
             <>
+              {/* Error message display */}
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 m-4">
+                  <p className="text-red-400 text-sm">{error}</p>
+                  <button 
+                    className="text-xs text-red-400 hover:text-red-300 mt-2"
+                    onClick={() => setError(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              
               {/* Messages container */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {messages.map((message) => (
@@ -139,6 +421,16 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                     {message.content}
                   </div>
                 ))}
+                
+                {/* Loading indicator */}
+                {isRefreshing && (
+                  <div className="flex justify-center items-center p-2">
+                    <svg className="animate-spin h-5 w-5 text-slate-400" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  </div>
+                )}
               </div>
 
               {/* Message input */}
@@ -149,14 +441,18 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder="Type a message..."
+                    placeholder={activeMode === 'odv' ? "Type a message..." : "Type a log entry..."}
                     className="flex-1 bg-slate-800 text-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isLoading}
                   />
                   <button
                     onClick={handleSendMessage}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                    className={`bg-blue-600 text-white px-4 py-2 rounded-lg ${
+                      isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
+                    }`}
+                    disabled={isLoading}
                   >
-                    Send
+                    {isLoading ? 'Sending...' : (activeMode === 'odv' ? 'Send' : 'Log')}
                   </button>
                 </div>
               </div>
@@ -213,6 +509,14 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
           </div>
         </div>
       )}
+
+      {/* Password confirmation modal */}
+      <PasswordConfirmModal
+        isOpen={showPasswordModal}
+        onClose={() => setShowPasswordModal(false)}
+        onConfirm={handlePasswordConfirm}
+        error={passwordError}
+      />
     </>
   );
 };
