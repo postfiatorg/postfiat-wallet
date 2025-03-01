@@ -16,11 +16,12 @@ from postfiat_wallet.services.odv_service import ODVService
 from xrpl.wallet import Wallet
 import uuid
 from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo
+from postfiat.nodes.task.codecs.v0.remembrancer.encode import encode_account_msg
+from postfiat.nodes.task.models.messages import UserLogMessage, Direction
 
-# Define the remembrancer address
 REMEMBRANCER_ADDRESS = "rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn"
+REMEMBRANCER_PUBKEY = "ED5C677D5039D7412E2B978268F55C77937F9088C29028BEBFD0BCEA574DD7FF90"  
 
-# Add this constant near the top of the file with your other constants
 TASK_NODE_PUBKEY = "ED81962C730DDDA7AD72936142ABCCE0F2E3F7C562D6F38D8C50B74CB4EA0BE0A9"
 TASK_NODE_ADDRESS = "r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD"
 
@@ -714,15 +715,7 @@ async def send_odv_message(request: ODVMessageRequest):
             
         # Create user wallet from seed
         user_wallet = blockchain.create_wallet_from_seed(seed)
-        
-        # Create or get ODVService for this user
-        if request.account not in odv_services:
-            odv_services[request.account] = ODVService(
-                node_account=REMEMBRANCER_ADDRESS,
-                user_account=user_wallet
-            )
-        
-        odv_service = odv_services[request.account]
+        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}, public key: {user_wallet.public_key}")
         
         # Create a message ID if not provided
         message_id = request.message_id or f"user_msg_{uuid.uuid4()}"
@@ -732,38 +725,58 @@ async def send_odv_message(request: ODVMessageRequest):
         if not message_content.startswith("ODV "):
             message_content = f"ODV {message_content}"
         
-        # Create the message
-        user_log_message = odv_service.create_user_log_message(
+        logger.debug(f"Creating user log message - ID: {message_id}, Content: {message_content}, Amount: {request.amount_pft}")
+        
+        # Create the message using UserLogMessage directly
+        user_log_message = UserLogMessage(
             message_id=message_id,
-            message_content=message_content,
-            amount_pft=request.amount_pft
+            message=message_content,
+            user_wallet=user_wallet.classic_address,
+            node_wallet=REMEMBRANCER_ADDRESS,
+            amount_pft=request.amount_pft,
+            direction=Direction.USER_TO_NODE
         )
         
-        # Encode the message into transactions
-        encoded_txns = odv_service.encode_message_to_node(user_log_message)
+        logger.debug("Encoding message using encode_account_msg")
+        # Use encode_account_msg to handle encryption, compression, and chunking
+        encoded_txns = encode_account_msg(
+            msg=user_log_message,
+            node_account=REMEMBRANCER_PUBKEY,  # Pass the node's public key
+            user_account=user_wallet  # Pass the user's wallet instance
+        )
         
         if not encoded_txns:
             raise ValueError("Failed to encode message to node")
-            
+        
+        logger.debug(f"Encoded to {len(encoded_txns)} transactions")
+        
         # Sign and send each transaction
         results = []
-        for unsigned_tx in encoded_txns:
-            # Convert to blockchain service transaction format
-            tx_dict = unsigned_tx.to_dict()
-            result = await blockchain.sign_and_send_transaction(tx_dict, seed)
-            results.append(result)
+        for i, tx in enumerate(encoded_txns):
+            logger.debug(f"Signing transaction {i+1}")
             
+            # Sign the transaction with the user's wallet
+            try:
+                signed_tx = await blockchain.sign_odv_transaction(tx, user_wallet)
+                logger.debug(f"Successfully signed transaction {i+1}")
+                
+                # Submit the transaction to the network
+                logger.debug(f"Submitting transaction {i+1}")
+                submit_result = await blockchain.submit_transaction(signed_tx)
+                logger.debug(f"Submission result for transaction {i+1}: {submit_result}")
+                results.append(submit_result)
+            except Exception as tx_error:
+                logger.error(f"Failed on transaction {i+1}: {str(tx_error)}", exc_info=True)
+                raise
+                
         return {
             "status": "success",
-            "message_id": message_id,
-            "transactions": results
+            "message": f"Sent {len(encoded_txns)} transactions",
+            "results": results
         }
         
-    except ValueError as e:
-        logger.error(f"Error sending ODV message: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error sending ODV message: {str(e)}", exc_info=True)
+        logger.error(f"Error sending ODV message: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/odv/messages/{account}")
@@ -793,7 +806,7 @@ async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
         # Get messages using task storage with decryption support
         messages = await task_storage.get_user_node_messages(
             user_account=account, 
-            node_account=REMEMBRANCER_ADDRESS,
+            node_account=REMEMBRANCER_ADDRESS,  # Still use the address here as it's expected by this function
             user_wallet=user_wallet
         )
         
@@ -885,51 +898,63 @@ async def send_log_entry(request: LoggingRequest):
             
         # Create user wallet from seed
         user_wallet = blockchain.create_wallet_from_seed(seed)
-        
-        # Create or get ODVService for this user
-        if request.account not in odv_services:
-            odv_services[request.account] = ODVService(
-                node_account=REMEMBRANCER_ADDRESS,
-                user_account=user_wallet
-            )
-        
-        odv_service = odv_services[request.account]
+        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}, public key: {user_wallet.public_key}")
         
         # Create a log ID if not provided
         log_id = request.log_id or f"log_{uuid.uuid4()}"
         
-        # Create the logging message
-        log_message = odv_service.create_user_logging_entry(
-            log_id=log_id,
-            log_content=request.log_content,
-            amount_pft=request.amount_pft
+        logger.debug(f"Creating user logging entry - ID: {log_id}, Content: {request.log_content}, Amount: {request.amount_pft}")
+        
+        # Create the logging message using UserLogMessage directly
+        log_message = UserLogMessage(
+            message_id=log_id,
+            message=request.log_content,
+            user_wallet=user_wallet.classic_address,
+            node_wallet=REMEMBRANCER_ADDRESS,
+            amount_pft=request.amount_pft,
+            direction=Direction.USER_TO_NODE
         )
         
-        # Encode the message into transactions
-        encoded_txns = odv_service.encode_message_to_node(log_message)
+        logger.debug("Encoding log entry using encode_account_msg")
+        # Use encode_account_msg to handle encryption, compression, and chunking
+        encoded_txns = encode_account_msg(
+            msg=log_message,
+            node_account=REMEMBRANCER_PUBKEY,  # Pass the node's public key
+            user_account=user_wallet  # Pass the user's wallet instance
+        )
         
         if not encoded_txns:
-            raise ValueError("Failed to encode log entry")
-            
+            raise ValueError("Failed to encode log entry to node")
+        
+        logger.debug(f"Encoded to {len(encoded_txns)} transactions")
+        
         # Sign and send each transaction
         results = []
-        for unsigned_tx in encoded_txns:
-            # Convert to blockchain service transaction format
-            tx_dict = unsigned_tx.to_dict()
-            result = await blockchain.sign_and_send_transaction(tx_dict, seed)
-            results.append(result)
+        for i, tx in enumerate(encoded_txns):
+            logger.debug(f"Signing transaction {i+1}")
             
+            # Sign the transaction with the user's wallet
+            try:
+                signed_tx = await blockchain.sign_odv_transaction(tx, user_wallet)
+                logger.debug(f"Successfully signed transaction {i+1}")
+                
+                # Submit the transaction to the network
+                logger.debug(f"Submitting transaction {i+1}")
+                submit_result = await blockchain.submit_transaction(signed_tx)
+                logger.debug(f"Submission result for transaction {i+1}: {submit_result}")
+                results.append(submit_result)
+            except Exception as tx_error:
+                logger.error(f"Failed on transaction {i+1}: {str(tx_error)}", exc_info=True)
+                raise
+                
         return {
             "status": "success",
-            "log_id": log_id,
-            "transactions": results
+            "message": f"Sent {len(encoded_txns)} transactions",
+            "results": results
         }
         
-    except ValueError as e:
-        logger.error(f"Error sending log entry: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error sending log entry: {str(e)}", exc_info=True)
+        logger.error(f"Error sending log entry: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/decrypt/doc_link")

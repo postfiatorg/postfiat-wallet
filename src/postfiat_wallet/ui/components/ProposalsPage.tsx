@@ -251,19 +251,12 @@ const ProposalsPage = () => {
   const getMainMessage = (task: any) => {
     if (!task.message_history?.length) return "No message available";
     
-    // For proposed tasks, show the proposal message
-    if (task.status === 'proposed' && task.message_history.length >= 2) {
+    // Always show the proposal message (index 1) if it exists
+    if (task.message_history.length >= 2) {
       return task.message_history[1].data;
     }
-    // For accepted tasks, show the acceptance message
-    else if (task.status === 'accepted' && task.message_history.length >= 3) {
-      return task.message_history[2].data;
-    }
-    // For challenged tasks, show the verification message
-    else if (task.status === 'challenged' && task.message_history.length >= 5) {
-      return task.message_history[4].data;
-    }
-    // Default to the first message
+    
+    // Fall back to first message if proposal message doesn't exist
     return task.message_history[0].data;
   };
 

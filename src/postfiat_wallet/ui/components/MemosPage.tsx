@@ -31,6 +31,9 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // Add a new state to track initial fetch with stored password
+  const [initialFetching, setInitialFetching] = useState(false);
+  
   // Replace password modal state with decrypt modal state
   const [showDecryptModal, setShowDecryptModal] = useState(false);
   const [decryptError, setDecryptError] = useState<string | undefined>();
@@ -40,7 +43,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   
   // Message decryption state
   const [messagesDecrypted, setMessagesDecrypted] = useState(false);
-  const [decryptionPassword, setDecryptionPassword] = useState<string | null>(null);
+  const [sessionPassword, setSessionPassword] = useState<string | null>(null);
 
   const [threads, setThreads] = useState<Thread[]>([
     {
@@ -71,6 +74,16 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const fetchMessages = async (password?: string) => {
     if (!address) return;
     
+    // Use auth context password if available and no specific password provided
+    const passwordToUse = password || sessionPassword || auth.password;
+    
+    // If no password is available, show the decrypt modal
+    if (!passwordToUse) {
+      setDecryptError(undefined);
+      setShowDecryptModal(true);
+      return;
+    }
+    
     setIsRefreshing(true);
     try {
       // Add artificial delay for better UX
@@ -81,7 +94,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            password: password || decryptionPassword
+            password: passwordToUse
           }),
         }),
         new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
@@ -121,10 +134,16 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
           ));
         }
         
-        // Mark messages as decrypted
-        if (password) {
-          setDecryptionPassword(password);
-          setMessagesDecrypted(true);
+        // Always mark messages as decrypted on success and store password
+        setMessagesDecrypted(true);
+        
+        // Store the password if it's new
+        if (password && !sessionPassword) {
+          setSessionPassword(password);
+          // Also update in auth context
+          if (auth.setPassword) {
+            auth.setPassword(password);
+          }
         }
       }
     } catch (err) {
@@ -136,20 +155,43 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setInitialFetching(false); // Clear initialFetching state when done
     }
   };
   
   // Handle password confirmation
   const handlePasswordConfirm = async (password: string) => {
-    if (pendingAction === 'sendMessage') {
-      await executeSendMessage(password);
-    } else if (pendingAction === 'sendLog') {
-      await executeSendLog(password);
-    } else if (pendingAction === 'decryptMessages') {
-      await fetchMessages(password);
+    try {
+      if (pendingAction === 'sendMessage') {
+        await executeSendMessage(password);
+        // Save password for future use if successful
+        if (!sessionPassword) {
+          setSessionPassword(password);
+          // Also update in auth context
+          if (auth.setPassword) {
+            auth.setPassword(password);
+          }
+        }
+      } else if (pendingAction === 'sendLog') {
+        await executeSendLog(password);
+        // Save password for future use if successful
+        if (!sessionPassword) {
+          setSessionPassword(password);
+          // Also update in auth context
+          if (auth.setPassword) {
+            auth.setPassword(password);
+          }
+        }
+      } else if (pendingAction === 'decryptMessages') {
+        await fetchMessages(password);
+        // fetchMessages already handles storing the password
+      }
+      setShowPasswordModal(false);
+      setPendingAction(null);
+    } catch (error) {
+      console.error('Password operation failed:', error);
+      // Don't close modal if there's an error
     }
-    setShowPasswordModal(false);
-    setPendingAction(null);
   };
   
   // Execute sending message with confirmed password
@@ -161,25 +203,54 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     
     setIsLoading(true);
     try {
+      // Add detailed logging before sending
+      const requestData = {
+        account: address,
+        password: password,
+        message: newMessage.trim(),
+        amount_pft: 1 // Set to 1 PFT to ensure we have valid amount
+      };
+      
+      console.log('Sending message request:', {
+        url: 'http://localhost:8000/api/odv/send_message',
+        method: 'POST',
+        body: JSON.stringify({
+          ...requestData,
+          password: '[REDACTED]' // Don't log actual password
+        })
+      });
+      
       const response = await fetch('http://localhost:8000/api/odv/send_message', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          account: address,
-          password: password,
-          message: newMessage.trim(),
-          amount_pft: 0 // Default to 0 PFT
-        }),
+        body: JSON.stringify(requestData),
+      });
+      
+      // Log the raw response
+      const responseText = await response.text();
+      console.log('Raw response from server:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries([...response.headers.entries()]),
+        body: responseText
       });
       
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to send message: ${text}`);
+        throw new Error(`Failed to send message: ${responseText}`);
       }
       
-      const data = await response.json();
+      // Parse the JSON response if valid
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse response as JSON:', parseError);
+        throw new Error(`Server returned invalid JSON: ${responseText}`);
+      }
+      
+      console.log('Parsed response data:', data);
       
       if (data.status === 'success') {
         // Add message to UI immediately (optimistic update)
@@ -213,8 +284,19 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       }
     } catch (err) {
       console.error('Error sending message:', err);
+      // Add more detailed logging for the error
+      if (err instanceof Error) {
+        console.log('Error details:', {
+          name: err.name,
+          message: err.message,
+          stack: err.stack
+        });
+      } else {
+        console.log('Unknown error type:', err);
+      }
       setError(err instanceof Error ? err.message : 'An error occurred');
       setPasswordError(err instanceof Error ? err.message : 'Failed to send message');
+      throw err; // Re-throw to handle in calling function
     } finally {
       setIsLoading(false);
     }
@@ -278,33 +360,70 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       console.error('Error sending log entry:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
       setPasswordError(err instanceof Error ? err.message : 'Failed to send log entry');
+      throw err; // Re-throw to handle in calling function
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Prepare to send message (show password modal)
+  // Prepare to send message (show password modal only if needed)
   const sendMessageToODV = () => {
     if (!newMessage.trim()) {
       setError('Please enter a message');
       return;
     }
     
-    setPendingAction('sendMessage');
-    setPasswordError(undefined);
-    setShowPasswordModal(true);
+    // First check auth context password, then session password
+    const storedPassword = auth.password || sessionPassword;
+    
+    // If we already have a password, use it directly
+    if (storedPassword) {
+      executeSendMessage(storedPassword).catch(() => {
+        // If using stored password fails, ask for it again
+        setPendingAction('sendMessage');
+        setPasswordError('Stored password is invalid. Please enter your password again.');
+        setShowPasswordModal(true);
+        setSessionPassword(null); // Clear invalid password
+        // Also clear from auth context
+        if (auth.setPassword) {
+          auth.setPassword('');
+        }
+      });
+    } else {
+      setPendingAction('sendMessage');
+      setPasswordError(undefined);
+      setShowPasswordModal(true);
+    }
   };
 
-  // Prepare to send log (show password modal)
+  // Prepare to send log (show password modal only if needed)
   const sendLogEntry = () => {
     if (!newMessage.trim()) {
       setError('Please enter a log message');
       return;
     }
     
-    setPendingAction('sendLog');
-    setPasswordError(undefined);
-    setShowPasswordModal(true);
+    // First check auth context password, then session password
+    const storedPassword = auth.password || sessionPassword;
+    
+    // If we already have a password, use it directly
+    if (storedPassword) {
+      executeSendLog(storedPassword).catch(() => {
+        // If using stored password fails, ask for it again
+        setPendingAction('sendLog');
+        setPasswordError('Stored password is invalid. Please enter your password again.');
+        setShowPasswordModal(true);
+        setSessionPassword(null); // Clear invalid password
+        // Also clear from auth context
+        if (auth.setPassword) {
+          auth.setPassword('');
+        }
+      });
+    } else {
+      setPendingAction('sendLog');
+      setPasswordError(undefined);
+      setShowPasswordModal(true);
+    }
   };
 
   // Update the handleSendMessage function to handle both modes
@@ -321,6 +440,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     try {
       await fetchMessages(password);
       setShowDecryptModal(false);
+      // Password is saved within fetchMessages if successful
     } catch (err) {
       console.error('Error decrypting messages:', err);
       setDecryptError(err instanceof Error ? err.message : 'Failed to decrypt messages');
@@ -331,12 +451,33 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   useEffect(() => {
     if (!address) return;
     
-    if (!messagesDecrypted) {
+    // Check auth context password first, then session password
+    if (auth.password) {
+      setInitialFetching(true); // Set initialFetching to true when using stored password
+      fetchMessages(auth.password).catch(() => {
+        // If using stored password fails, clear it and show decrypt modal
+        setSessionPassword(null);
+        if (auth.setPassword) {
+          auth.setPassword('');
+        }
+        setMessagesDecrypted(false);
+        setInitialFetching(false); // Clear initialFetching state on error
+        setDecryptError('Stored password is invalid. Please enter your password again.');
+        setShowDecryptModal(true);
+      });
+    } else if (sessionPassword) {
+      setInitialFetching(true); // Set initialFetching to true when using stored password
+      fetchMessages(sessionPassword).catch(() => {
+        // Handle failed session password similarly
+        setSessionPassword(null);
+        setMessagesDecrypted(false);
+        setInitialFetching(false); // Clear initialFetching state on error
+        setDecryptError('Stored password is invalid. Please enter your password again.');
+        setShowDecryptModal(true);
+      });
+    } else if (!messagesDecrypted) {
       setDecryptError(undefined);
       setShowDecryptModal(true);
-    } else if (decryptionPassword) {
-      // Initial fetch with existing password
-      fetchMessages();
     }
   }, [address]);
   
@@ -456,7 +597,13 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
               
               {/* Messages container */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {!messagesDecrypted && !isLoading ? (
+                {/* Show loading state when initially fetching with stored password */}
+                {initialFetching || isLoading ? (
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                    <p className="mt-4 text-slate-400">Loading messages...</p>
+                  </div>
+                ) : !messagesDecrypted ? (
                   <div className="flex flex-col items-center justify-center h-full text-slate-400">
                     <p>Messages need to be decrypted</p>
                     <button
@@ -486,8 +633,8 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                   ))
                 )}
                 
-                {/* Loading indicator */}
-                {isRefreshing && (
+                {/* Refreshing indicator */}
+                {isRefreshing && !initialFetching && (
                   <div className="flex justify-center items-center p-2">
                     <svg className="animate-spin h-5 w-5 text-slate-400" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />

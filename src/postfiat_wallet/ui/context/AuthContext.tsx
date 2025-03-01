@@ -3,6 +3,7 @@ import { AuthState } from '../types/auth';
 
 interface AuthContextType extends AuthState {
   clearAuth: () => Promise<void>;
+  setPassword: (password: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -10,7 +11,8 @@ const AuthContext = createContext<AuthContextType>({
   address: null,
   username: null,
   password: null,
-  clearAuth: async () => {}
+  clearAuth: async () => {},
+  setPassword: () => {}
 });
 
 export function AuthProvider({ 
@@ -22,9 +24,14 @@ export function AuthProvider({
   value: AuthState;
   onClearAuth: () => Promise<void>;
 }) {
+  const setPassword = (password: string) => {
+    value.password = password;
+  };
+
   const contextValue = {
     ...value,
-    clearAuth: onClearAuth
+    clearAuth: onClearAuth,
+    setPassword
   };
 
   return (
