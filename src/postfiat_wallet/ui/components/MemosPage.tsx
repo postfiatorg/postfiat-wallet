@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { PasswordConfirmModal } from './modals/PasswordConfirmModal';
+import DecryptMessagesModal from './modals/DecryptMessagesModal';
 
 interface Message {
   id: string;
@@ -30,10 +31,16 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Password modal state
+  // Replace password modal state with decrypt modal state
+  const [showDecryptModal, setShowDecryptModal] = useState(false);
+  const [decryptError, setDecryptError] = useState<string | undefined>();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordError, setPasswordError] = useState<string | undefined>();
   const [pendingAction, setPendingAction] = useState<'sendMessage' | 'sendLog' | null>(null);
+  
+  // Message decryption state
+  const [messagesDecrypted, setMessagesDecrypted] = useState(false);
+  const [decryptionPassword, setDecryptionPassword] = useState<string | null>(null);
 
   const [threads, setThreads] = useState<Thread[]>([
     {
@@ -60,15 +67,23 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   ]);
   const [newMessage, setNewMessage] = useState('');
 
-  // Fetch messages from API
-  const fetchMessages = async () => {
+  // Fetch messages from API with decryption
+  const fetchMessages = async (password?: string) => {
     if (!address) return;
     
     setIsRefreshing(true);
     try {
       // Add artificial delay for better UX
       const [response] = await Promise.all([
-        fetch(`http://localhost:8000/api/odv/messages/${address}`),
+        fetch(`http://localhost:8000/api/odv/messages/${address}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            password: password || decryptionPassword
+          }),
+        }),
         new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
       ]);
       
@@ -105,10 +120,19 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
               : thread
           ));
         }
+        
+        // Mark messages as decrypted
+        if (password) {
+          setDecryptionPassword(password);
+          setMessagesDecrypted(true);
+        }
       }
     } catch (err) {
       console.error('Error fetching messages:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
+      if (pendingAction === 'decryptMessages') {
+        setPasswordError(err instanceof Error ? err.message : 'Failed to decrypt messages');
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -121,6 +145,8 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       await executeSendMessage(password);
     } else if (pendingAction === 'sendLog') {
       await executeSendLog(password);
+    } else if (pendingAction === 'decryptMessages') {
+      await fetchMessages(password);
     }
     setShowPasswordModal(false);
     setPendingAction(null);
@@ -290,12 +316,33 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     }
   };
   
-  // Add periodic refresh (every 30 seconds)
+  // Add specific handler for decrypt
+  const handleDecrypt = async (password: string) => {
+    try {
+      await fetchMessages(password);
+      setShowDecryptModal(false);
+    } catch (err) {
+      console.error('Error decrypting messages:', err);
+      setDecryptError(err instanceof Error ? err.message : 'Failed to decrypt messages');
+    }
+  };
+  
+  // Prompt for decryption password when component mounts
   useEffect(() => {
     if (!address) return;
-
-    // Initial fetch
-    fetchMessages();
+    
+    if (!messagesDecrypted) {
+      setDecryptError(undefined);
+      setShowDecryptModal(true);
+    } else if (decryptionPassword) {
+      // Initial fetch with existing password
+      fetchMessages();
+    }
+  }, [address]);
+  
+  // Set up periodic refresh only if messages are decrypted
+  useEffect(() => {
+    if (!address || !messagesDecrypted) return;
     
     // Set up periodic refresh
     const intervalId = setInterval(() => {
@@ -304,7 +351,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     
     // Clean up on unmount
     return () => clearInterval(intervalId);
-  }, [address]);
+  }, [address, messagesDecrypted]);
 
   const handleInfoClick = (thread: Thread, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -326,9 +373,9 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
 
   return (
     <>
-      <div className="flex h-[calc(100vh-120px)]">
+      <div className="flex h-[calc(100vh-120px)] overflow-hidden">
         {/* Threads sidebar */}
-        <div className="w-1/4 border-r border-slate-700 overflow-y-auto flex flex-col">
+        <div className="w-1/4 min-w-[250px] border-r border-slate-700 flex flex-col">
           <div className="flex-1 overflow-y-auto">
             {threads.map((thread) => (
               <div
@@ -364,7 +411,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
           </div>
           
           {/* Mode toggle - both options visible */}
-          <div className="border-t border-slate-700 p-4">
+          <div className="border-t border-slate-700 p-4 sticky bottom-0 bg-slate-900">
             <div className="flex rounded-lg overflow-hidden">
               <button
                 onClick={() => setActiveMode('odv')}
@@ -391,7 +438,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
         </div>
 
         {/* Messages area */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col overflow-hidden">
           {selectedThread ? (
             <>
               {/* Error message display */}
@@ -409,18 +456,35 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
               
               {/* Messages container */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`max-w-[70%] p-3 rounded-lg ${
-                      message.from === address
-                        ? 'ml-auto bg-blue-600 text-white'
-                        : 'bg-slate-700 text-slate-200'
-                    }`}
-                  >
-                    {message.content}
+                {!messagesDecrypted && !isLoading ? (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                    <p>Messages need to be decrypted</p>
+                    <button
+                      onClick={() => {
+                        setDecryptError(undefined);
+                        setShowDecryptModal(true);
+                      }}
+                      className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                    >
+                      Decrypt Messages
+                    </button>
                   </div>
-                ))}
+                ) : (
+                  messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`max-w-[70%] p-3 rounded-lg break-words overflow-hidden ${
+                        message.from === address
+                          ? 'ml-auto bg-blue-600 text-white'
+                          : 'bg-slate-700 text-slate-200'
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap break-all overflow-hidden">
+                        {message.content}
+                      </div>
+                    </div>
+                  ))
+                )}
                 
                 {/* Loading indicator */}
                 {isRefreshing && (
@@ -434,7 +498,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
               </div>
 
               {/* Message input */}
-              <div className="p-4 border-t border-slate-700">
+              <div className="p-4 border-t border-slate-700 sticky bottom-0 bg-slate-900">
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -443,14 +507,14 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder={activeMode === 'odv' ? "Type a message..." : "Type a log entry..."}
                     className="flex-1 bg-slate-800 text-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={isLoading}
+                    disabled={isLoading || !messagesDecrypted}
                   />
                   <button
                     onClick={handleSendMessage}
                     className={`bg-blue-600 text-white px-4 py-2 rounded-lg ${
-                      isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
+                      isLoading || !messagesDecrypted ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
                     }`}
-                    disabled={isLoading}
+                    disabled={isLoading || !messagesDecrypted}
                   >
                     {isLoading ? 'Sending...' : (activeMode === 'odv' ? 'Send' : 'Log')}
                   </button>
@@ -510,12 +574,29 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
         </div>
       )}
 
-      {/* Password confirmation modal */}
+      {/* Replace with our two separate modals */}
       <PasswordConfirmModal
         isOpen={showPasswordModal}
-        onClose={() => setShowPasswordModal(false)}
+        onClose={() => {
+          setShowPasswordModal(false);
+          setPendingAction(null);
+        }}
         onConfirm={handlePasswordConfirm}
         error={passwordError}
+      />
+      
+      {/* New decrypt modal */}
+      <DecryptMessagesModal
+        isOpen={showDecryptModal}
+        onClose={() => {
+          setShowDecryptModal(false);
+          // If user cancels, we might want to show a placeholder UI
+          if (!messagesDecrypted) {
+            setError("Messages are encrypted. Please decrypt to view them.");
+          }
+        }}
+        onDecrypt={handleDecrypt}
+        error={decryptError}
       />
     </>
   );

@@ -284,3 +284,22 @@ class BlockchainService:
         
         shared_secret = nacl.bindings.crypto_scalarmult(private_curve, public_curve)
         return shared_secret
+
+    def create_wallet_from_seed(self, seed: str) -> Wallet:
+        """
+        Create an XRPL wallet object from a seed.
+        This is different from create_wallet_from_secret because it returns
+        a Wallet object instead of a dictionary.
+        
+        Args:
+            seed: The seed/secret key
+            
+        Returns:
+            A Wallet object that can be used for signing and encryption
+        """
+        try:
+            # In XRPL, seed and secret are the same thing
+            return Wallet.from_seed(seed=seed)
+        except Exception as e:
+            logger.error(f"Failed to create wallet from seed: {str(e)}")
+            raise ValueError(f"Invalid seed: {str(e)}")

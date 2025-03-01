@@ -133,6 +133,10 @@ class LoggingRequest(BaseModel):
     log_id: Optional[str] = None
     amount_pft: int = 0
 
+# Request model for decrypting ODV messages
+class DecryptMessagesRequest(BaseModel):
+    password: str
+
 @router.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -713,10 +717,15 @@ async def send_odv_message(request: ODVMessageRequest):
         # Create a message ID if not provided
         message_id = request.message_id or f"user_msg_{uuid.uuid4()}"
         
+        # Prepend "ODV " to message if it doesn't already start with it
+        message_content = request.message
+        if not message_content.startswith("ODV "):
+            message_content = f"ODV {message_content}"
+        
         # Create the message
         user_log_message = odv_service.create_user_log_message(
             message_id=message_id,
-            message_content=request.message,
+            message_content=message_content,
             amount_pft=request.amount_pft
         )
         
@@ -747,10 +756,69 @@ async def send_odv_message(request: ODVMessageRequest):
         logger.error(f"Unexpected error sending ODV message: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/odv/messages/{account}")
+async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
+    """
+    Get all messages between the user and ODV node, with decryption support
+    """
+    try:
+        # Get wallet info and decrypt the seed
+        wallet_info = storage.get_wallet(account)
+        
+        try:
+            seed = storage.decrypt_private_key(
+                wallet_info["encrypted_key"], 
+                request.password
+            )
+        except ValueError as e:
+            logger.error(f"Failed to decrypt key for account {account}")
+            raise HTTPException(
+                status_code=401, 
+                detail=f"Invalid password: {str(e)}"
+            )
+            
+        # Create user wallet from seed
+        user_wallet = blockchain.create_wallet_from_seed(seed)
+        
+        # Get messages using task storage with decryption support
+        messages = await task_storage.get_user_node_messages(
+            user_account=account, 
+            node_account=REMEMBRANCER_ADDRESS,
+            user_wallet=user_wallet
+        )
+        
+        # Format the messages for the frontend
+        formatted_messages = []
+        for msg in messages:
+            # Determine direction based on message type
+            is_from_user = msg.get("direction") == "USER_TO_NODE"
+            
+            formatted_messages.append({
+                "id": msg.get("message_id", "unknown"),
+                "from": account if is_from_user else REMEMBRANCER_ADDRESS,
+                "to": REMEMBRANCER_ADDRESS if is_from_user else account,
+                "content": msg.get("message", ""),
+                "timestamp": msg.get("timestamp", 0),
+                "amount_pft": msg.get("amount_pft", 0)
+            })
+            
+        # Sort by timestamp
+        formatted_messages.sort(key=lambda x: x["timestamp"])
+        
+        return {
+            "status": "success",
+            "messages": formatted_messages
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting ODV messages: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Keep the original GET endpoint for backward compatibility
 @router.get("/odv/messages/{account}")
 async def get_odv_messages(account: str):
     """
-    Get all messages between the user and ODV node
+    Get all messages between the user and ODV node (without decryption)
     """
     try:
         # Get messages from task storage - these are already decoded

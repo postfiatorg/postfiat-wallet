@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from postfiat.rpc import CachingRpcClient
-from postfiat.nodes.task.models.messages import Message
+from postfiat.nodes.task.models.messages import Message, Direction
 from postfiat.nodes.task.state import TaskStatus, UserState
 from postfiat.utils.streams import combine_streams
 from postfiat.nodes.task.codecs.v0.task import decode_account_stream as decode_task_stream
@@ -14,6 +14,8 @@ from datetime import datetime
 
 from postfiat.nodes.task.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
 from postfiat.nodes.task.codecs.v0.task import decode_account_txn
+from postfiat.nodes.task.codecs.v0.remembrancer.decode import decode_account_txn
+from xrpl.wallet import Wallet
 
 logger = logging.getLogger(__name__)
 
@@ -438,13 +440,14 @@ class TaskStorage:
             "is_blacklisted": self._state.node_account.is_blacklisted
         }
 
-    async def get_user_node_messages(self, user_account: str, node_account: str):
+    async def get_user_node_messages(self, user_account: str, node_account: str, user_wallet: Wallet = None):
         """
         Get all messages between a user and a specific node
         
         Args:
             user_account: User account address
             node_account: Node account address
+            user_wallet: Optional wallet instance for decrypting messages
             
         Returns:
             List of messages between the user and node
@@ -454,15 +457,42 @@ class TaskStorage:
         
         messages = []
         
-        # Collect all transactions between user and node account
-        for tx in self._user_transactions.get(user_account, []):
-            # Check if this transaction is between user and node
-            if (tx.from_address == user_account and tx.to_address == node_account) or \
-               (tx.from_address == node_account and tx.to_address == user_account):
-                # If this was a message, it will have been decoded already
-                if hasattr(tx, 'decoded_message') and tx.decoded_message:
-                    messages.append(tx.decoded_message)
+        # Use the client to fetch all transactions
+        async for txn in self.client.get_account_txns(
+            user_account,
+            EARLIEST_LEDGER_SEQ,
+            -1
+        ):
+            # Only consider transactions between the user and node
+            if (txn.from_address == user_account and txn.to_address == node_account) or \
+               (txn.from_address == node_account and txn.to_address == user_account):
                 
+                # Try to decode the transaction using the remembrancer decoder
+                try:
+                    msg = decode_account_txn(
+                        txn,
+                        node_account=node_account,
+                        user_account=user_wallet or user_account  # Pass wallet for decryption if available
+                    )
+                    
+                    if msg:
+                        # Format the message for the frontend
+                        is_from_user = msg.direction == Direction.USER_TO_NODE
+                        
+                        messages.append({
+                            "message_id": msg.message_id,
+                            "direction": "USER_TO_NODE" if is_from_user else "NODE_TO_USER",
+                            "message": msg.message,
+                            "timestamp": msg.timestamp.timestamp() if hasattr(msg, 'timestamp') and msg.timestamp else 0,
+                            "amount_pft": msg.amount_pft if hasattr(msg, 'amount_pft') else 0
+                        })
+                except Exception as e:
+                    logger.debug(f"Error decoding transaction {txn.hash}: {str(e)}")
+                    continue
+        
+        # Sort by timestamp
+        messages.sort(key=lambda x: x["timestamp"])
+        
         return messages
     
 
