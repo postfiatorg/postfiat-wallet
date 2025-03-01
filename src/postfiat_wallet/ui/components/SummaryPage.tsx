@@ -22,7 +22,7 @@ interface AccountStatus {
   init_rite_status: string;
   context_doc_link: string | null;
   is_blacklisted: boolean;
-  initiation_rite: string | null;
+  init_rite_statement: string | null;
   sweep_address: string | null;
 }
 
@@ -43,6 +43,81 @@ const SummaryPage = () => {
   // Add state for account status
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
+
+  // Add these state variables with the other state declarations
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentAction, setCurrentAction] = useState<{
+    type: string;
+    data: any;
+  } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Add a new function to decrypt the link
+  const decryptDocumentLink = async (encryptedLink: string, password: string) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/decrypt/doc_link', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account: address,
+          password,
+          encrypted_link: encryptedLink
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to decrypt link: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      return data.link;
+    } catch (error) {
+      console.error('Error decrypting link:', error);
+      throw error;
+    }
+  };
+
+  // Modify the openContextDoc function
+  const openContextDoc = async (link: string) => {
+    // Check if the link contains WHISPER__ anywhere in it
+    if (link.includes('WHISPER__')) {
+      // Extract the encrypted part (everything from WHISPER__ onwards)
+      const encryptedPart = link.substring(link.indexOf('WHISPER__'));
+      
+      // Show password modal
+      setShowPasswordModal(true);
+      setCurrentAction({
+        type: 'decrypt_link',
+        data: { link: encryptedPart }
+      });
+    } else {
+      // Open directly if not encrypted
+      window.open(link, '_blank');
+    }
+  };
+
+  // Add password modal handling
+  const handlePasswordConfirm = async (password: string) => {
+    if (currentAction?.type === 'decrypt_link') {
+      try {
+        setIsLoading(true);
+        const decryptedLink = await decryptDocumentLink(
+          currentAction.data.link, 
+          password
+        );
+        window.open(decryptedLink, '_blank');
+      } catch (error) {
+        setError(`Failed to decrypt link: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setIsLoading(false);
+        setShowPasswordModal(false);
+        setCurrentAction(null);
+      }
+    }
+  };
 
   useEffect(() => {
     const fetchSummary = async () => {
@@ -198,6 +273,13 @@ const SummaryPage = () => {
 
   // Add PostFiat status details
   const postfiatDetails = loadingStatus ? [] : [
+    // Put initiation rite statement first
+    ...(accountStatus?.init_rite_statement ? [{
+      label: "Initiation Rite",
+      value: `"${accountStatus.init_rite_statement}"`,
+      className: "italic"
+    }] : []),
+    // Then show initiation status
     {
       label: "Initiation Status",
       value: accountStatus?.init_rite_status || "Unknown",
@@ -221,11 +303,6 @@ const SummaryPage = () => {
       label: "Context Document",
       value: "View Document",
       link: accountStatus.context_doc_link
-    }] : []),
-    ...(accountStatus?.initiation_rite ? [{
-      label: "Initiation Rite",
-      value: `"${accountStatus.initiation_rite}"`,
-      className: "italic"
     }] : [])
   ].filter(item => item); // Filter out any undefined items
 
@@ -389,23 +466,21 @@ const SummaryPage = () => {
               {postfiatDetails.length > 0 && (
                 <>
                   <div className="border-t border-slate-800 pt-4 mt-4">
-                    <p className="text-sm font-medium text-slate-400 mb-4">PostFiat Status</p>
+                    <p className="text-sm font-medium text-slate-400 mb-4">Post Fiat Status</p>
                     
-                    {postfiatDetails.map((item) => (
-                      <div key={item.label} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4">
+                    {postfiatDetails.map((item, index) => (
+                      <div key={index} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4">
                         <div>
                           <p className="text-sm font-medium text-slate-400">{item.label}</p>
                           {item.link ? (
-                            <a 
-                              href={item.link} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-sm text-blue-400 hover:text-blue-300 underline mt-1"
+                            <button
+                              onClick={() => openContextDoc(item.link!)}
+                              className="text-blue-400 hover:underline hover:text-blue-300 text-sm mt-1"
                             >
                               {item.value}
-                            </a>
+                            </button>
                           ) : (
-                            <p className={`text-sm ${item.className || 'text-slate-200'} mt-1 ${item.label === 'Sweep Address' ? 'font-mono' : ''}`}>
+                            <p className={`text-sm mt-1 ${item.className || "text-slate-200"}`}>
                               {item.value}
                             </p>
                           )}
@@ -513,6 +588,67 @@ const SummaryPage = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Password confirmation modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-semibold text-white mb-4">Enter Password</h3>
+            <p className="text-slate-400 mb-4">
+              Your password is needed to decrypt the document link.
+            </p>
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const password = (e.currentTarget.elements.namedItem('password') as HTMLInputElement).value;
+              handlePasswordConfirm(password);
+            }}>
+              <input
+                type="password"
+                name="password"
+                className="w-full p-3 bg-slate-800 border border-slate-700 rounded-md text-white mb-4"
+                placeholder="Your wallet password"
+                required
+              />
+              
+              {error && (
+                <div className="text-red-400 mb-4">{error}</div>
+              )}
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordModal(false);
+                    setCurrentAction(null);
+                  }}
+                  className="px-4 py-2 bg-slate-800 text-white rounded-md hover:bg-slate-700"
+                  disabled={isLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center"
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Processing...
+                    </>
+                  ) : (
+                    "Confirm"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 };

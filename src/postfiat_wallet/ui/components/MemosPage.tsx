@@ -36,7 +36,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const [decryptError, setDecryptError] = useState<string | undefined>();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordError, setPasswordError] = useState<string | undefined>();
-  const [pendingAction, setPendingAction] = useState<'sendMessage' | 'sendLog' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'sendMessage' | 'sendLog' | 'decryptMessages' | null>(null);
   
   // Message decryption state
   const [messagesDecrypted, setMessagesDecrypted] = useState(false);

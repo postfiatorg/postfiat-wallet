@@ -15,9 +15,14 @@ import json
 from postfiat_wallet.services.odv_service import ODVService
 from xrpl.wallet import Wallet
 import uuid
+from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo
 
 # Define the remembrancer address
 REMEMBRANCER_ADDRESS = "rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn"
+
+# Add this constant near the top of the file with your other constants
+TASK_NODE_PUBKEY = "ED81962C730DDDA7AD72936142ABCCE0F2E3F7C562D6F38D8C50B74CB4EA0BE0A9"
+TASK_NODE_ADDRESS = "r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD"
 
 app = FastAPI()
 
@@ -136,6 +141,11 @@ class LoggingRequest(BaseModel):
 # Request model for decrypting ODV messages
 class DecryptMessagesRequest(BaseModel):
     password: str
+
+class DecryptDocLinkRequest(BaseModel):
+    account: str
+    password: str
+    encrypted_link: str
 
 @router.get("/health")
 def health_check():
@@ -920,6 +930,59 @@ async def send_log_entry(request: LoggingRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error sending log entry: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/decrypt/doc_link")
+async def decrypt_document_link(request: DecryptDocLinkRequest):
+    """
+    Decrypt a document link that starts with WHISPER__
+    """
+    try:
+        encrypted_link = request.encrypted_link
+        
+        # Extract the WHISPER__ part if it's in the middle of a URL
+        if 'WHISPER__' in encrypted_link and not encrypted_link.startswith('WHISPER__'):
+            encrypted_link = encrypted_link[encrypted_link.index('WHISPER__'):]
+        
+        # Only attempt to decrypt if it has the WHISPER__ prefix
+        if not encrypted_link.startswith('WHISPER__'):
+            return {"status": "success", "link": request.encrypted_link}
+            
+        # Get wallet info and decrypt the seed
+        wallet_info = storage.get_wallet(request.account)
+        
+        try:
+            seed = storage.decrypt_private_key(
+                wallet_info["encrypted_key"], 
+                request.password
+            )
+        except ValueError as e:
+            logger.error(f"Failed to decrypt key for account {request.account}")
+            raise HTTPException(
+                status_code=401, 
+                detail=f"Invalid password: {str(e)}"
+            )
+            
+        # Create user wallet from seed
+        user_wallet = blockchain.create_wallet_from_seed(seed)
+        
+        # Use the actual node pubkey for decryption
+        node_pubkey = TASK_NODE_PUBKEY
+        
+        # Decrypt the link
+        decrypted_link = decrypt_memo(
+            encrypted_link, 
+            node_pubkey,          # Public key of the TaskNode
+            user_wallet.private_key    # Private key of the recipient (User)
+        )
+        
+        return {
+            "status": "success",
+            "link": decrypted_link
+        }
+        
+    except Exception as e:
+        logger.error(f"Error decrypting document link: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api

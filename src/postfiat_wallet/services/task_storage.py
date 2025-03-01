@@ -431,13 +431,15 @@ class TaskStorage:
             return {
                 "init_rite_status": "UNSTARTED",
                 "context_doc_link": None,
-                "is_blacklisted": False
+                "is_blacklisted": False,
+                "init_rite_statement": None
             }
         
         return {
             "init_rite_status": self._state.node_account.init_rite_status.name,
             "context_doc_link": self._state.node_account.context_doc_link,
-            "is_blacklisted": self._state.node_account.is_blacklisted
+            "is_blacklisted": self._state.node_account.is_blacklisted,
+            "init_rite_statement": self._state.node_account.init_rite_statement
         }
 
     async def get_user_node_messages(self, user_account: str, node_account: str, user_wallet: Wallet = None):
