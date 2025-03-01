@@ -617,9 +617,9 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                     </button>
                   </div>
                 ) : (
-                  messages.map((message) => (
+                  messages.map((message, index) => (
                     <div
-                      key={message.id}
+                      key={`${message.id || 'msg'}_${index}`}
                       className={`max-w-[70%] p-3 rounded-lg break-words overflow-hidden ${
                         message.from === address
                           ? 'ml-auto bg-blue-600 text-white'

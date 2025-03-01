@@ -68,7 +68,7 @@ class TaskStorage:
         first_ledger = EARLIEST_LEDGER_SEQ
         return first_ledger, -1
 
-    async def initialize_user_tasks(self, wallet_address: str) -> None:
+    async def initialize_user_tasks(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
         """
         Fetches all existing transactions/messages for the user from the earliest ledger
         to the latest, updating the state.
@@ -85,10 +85,16 @@ class TaskStorage:
             # Fetch transactions only once
             txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
             
-            # Decode the transactions using both decoders
-            task_stream = decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS)
+            # Create a copy of the transaction stream for remembrancer decoder
+            remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
             
-            async for msg in task_stream:
+            # Decode the transactions using both decoders and combine the streams
+            combined_stream = combine_streams(
+                decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, user_account=user_wallet),
+                decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS, user_account=user_wallet)
+            )
+            
+            async for msg in combined_stream:
                 self._state.update(msg)
                 newest_ledger_seen = msg.ledger_seq
                 message_count += 1
@@ -106,7 +112,7 @@ class TaskStorage:
             logger.error(f"Error during initialization: {str(e)}", exc_info=True)
             raise
 
-    async def start_refresh_loop(self, wallet_address: str) -> None:
+    async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
         """
         Starts a background loop that periodically polls for new ledger transactions,
         decodes them as TaskNode messages, and updates the in-memory state. If one
@@ -127,15 +133,17 @@ class TaskStorage:
                     start_ledger = self._last_processed_ledger.get(wallet_address)
                     if start_ledger is None:
                         # If the user wasn't initialized, do it now automatically
-                        await self.initialize_user_tasks(wallet_address)
+                        await self.initialize_user_tasks(wallet_address, user_wallet)
                         start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
 
-                    # We'll fetch from the last processed + 1 up to 'latest' (-1)
-                    task_txn_stream = self.client.get_account_txns(
+                    # Get a single transaction stream and make a copy
+                    txn_stream = self.client.get_account_txns(
                         wallet_address, 
                         start_ledger + 1, 
                         -1
                     )
+                    
+                    # Make a copy for the remembrancer decoder
                     remembrancer_txn_stream = self.client.get_account_txns(
                         wallet_address, 
                         start_ledger + 1, 
@@ -143,8 +151,8 @@ class TaskStorage:
                     )
 
                     async for msg in combine_streams(
-                        decode_task_stream(task_txn_stream, node_account=TASK_NODE_ADDRESS),
-                        decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS),
+                        decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, user_account=user_wallet),
+                        decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS, user_account=user_wallet),
                     ):
                         self._state.update(msg)
                         self._last_processed_ledger[wallet_address] = msg.ledger_seq
@@ -454,43 +462,52 @@ class TaskStorage:
         Returns:
             List of messages between the user and node
         """
-        # Make sure we have the latest transactions
-        await self.initialize_user_tasks(user_account)
+        logger.debug(f"Getting messages between {user_account} and {node_account}")
+        
+        # Make sure we have the latest transactions by initializing with the wallet for decryption
+        if user_wallet:
+            await self.initialize_user_tasks(user_account, user_wallet)
+        else:
+            await self.initialize_user_tasks(user_account)
         
         messages = []
         
-        # Use the client to fetch all transactions
-        async for txn in self.client.get_account_txns(
+        # Get the transaction stream once
+        txn_stream = self.client.get_account_txns(
             user_account,
             EARLIEST_LEDGER_SEQ,
             -1
-        ):
-            # Only consider transactions between the user and node
-            if (txn.from_address == user_account and txn.to_address == node_account) or \
-               (txn.from_address == node_account and txn.to_address == user_account):
-                
-                # Try to decode the transaction using the remembrancer decoder
-                try:
-                    msg = decode_account_txn(
-                        txn,
-                        node_account=node_account,
-                        user_account=user_wallet or user_account  # Pass wallet for decryption if available
-                    )
+        )
+        
+        try:
+            # Use the proper decoder based on the node account
+            if node_account == REMEMBRANCER_ADDRESS:
+                # Use the remembrancer decoder with the wallet for decryption
+                async for msg in decode_remembrancer_stream(txn_stream, node_account=node_account, user_account=user_wallet):
+                    # Format the message for the frontend
+                    is_from_user = msg.direction == Direction.USER_TO_NODE
                     
-                    if msg:
-                        # Format the message for the frontend
-                        is_from_user = msg.direction == Direction.USER_TO_NODE
-                        
-                        messages.append({
-                            "message_id": msg.message_id,
-                            "direction": "USER_TO_NODE" if is_from_user else "NODE_TO_USER",
-                            "message": msg.message,
-                            "timestamp": msg.timestamp.timestamp() if hasattr(msg, 'timestamp') and msg.timestamp else 0,
-                            "amount_pft": msg.amount_pft if hasattr(msg, 'amount_pft') else 0
-                        })
-                except Exception as e:
-                    logger.debug(f"Error decoding transaction {txn.hash}: {str(e)}")
-                    continue
+                    messages.append({
+                        "message_id": msg.message_id,
+                        "direction": "USER_TO_NODE" if is_from_user else "NODE_TO_USER",
+                        "message": msg.message,
+                        "timestamp": msg.timestamp.timestamp() if hasattr(msg, 'timestamp') and msg.timestamp else 0,
+                        "amount_pft": msg.amount_pft if hasattr(msg, 'amount_pft') else 0
+                    })
+            else:
+                # For other node types, use the task decoder
+                async for msg in decode_task_stream(txn_stream, node_account=node_account, user_account=user_wallet):
+                    is_from_user = msg.direction == Direction.USER_TO_NODE
+                    
+                    messages.append({
+                        "message_id": msg.message_id,
+                        "direction": "USER_TO_NODE" if is_from_user else "NODE_TO_USER",
+                        "message": msg.message,
+                        "timestamp": msg.timestamp.timestamp() if hasattr(msg, 'timestamp') and msg.timestamp else 0,
+                        "amount_pft": msg.amount_pft if hasattr(msg, 'amount_pft') else 0
+                    })
+        except Exception as e:
+            logger.error(f"Error processing messages: {str(e)}", exc_info=True)
         
         # Sort by timestamp
         messages.sort(key=lambda x: x["timestamp"])

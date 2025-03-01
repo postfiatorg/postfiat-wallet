@@ -802,11 +802,12 @@ async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
             
         # Create user wallet from seed
         user_wallet = blockchain.create_wallet_from_seed(seed)
+        logger.debug(f"Created wallet for {account}, will use for message decryption")
         
-        # Get messages using task storage with decryption support
+        # Get messages using task storage with decryption support by passing the wallet
         messages = await task_storage.get_user_node_messages(
             user_account=account, 
-            node_account=REMEMBRANCER_ADDRESS,  # Still use the address here as it's expected by this function
+            node_account=REMEMBRANCER_ADDRESS,
             user_wallet=user_wallet
         )
         
