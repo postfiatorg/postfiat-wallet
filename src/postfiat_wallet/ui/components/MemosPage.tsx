@@ -74,6 +74,24 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   ]);
   const [newMessage, setNewMessage] = useState('');
 
+  const [refreshTimeoutId, setRefreshTimeoutId] = useState<number | null>(null);
+
+  // Add this function to manage refreshes
+  const scheduleRefresh = (delayMs = 5000) => {
+    // Clear any existing timeout
+    if (refreshTimeoutId !== null) {
+      clearTimeout(refreshTimeoutId);
+    }
+    
+    // Set new timeout
+    const timeoutId = window.setTimeout(() => {
+      fetchMessages();
+      setRefreshTimeoutId(null);
+    }, delayMs);
+    
+    setRefreshTimeoutId(Number(timeoutId));
+  };
+
   // Fetch messages from API with decryption
   const fetchMessages = async (password?: string) => {
     if (!address) return;
@@ -282,9 +300,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
         ));
         
         // Schedule a refresh after a few seconds to get response
-        setTimeout(() => {
-          fetchMessages();
-        }, 5000);
+        scheduleRefresh(5000);
       }
     } catch (err) {
       console.error('Error sending message:', err);
@@ -353,7 +369,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       console.log('Log sent:', data);
       
       // Refresh after a short delay
-      setTimeout(() => fetchMessages(), 2000);
+      scheduleRefresh(3000);
       
     } catch (err) {
       console.error('Error sending log:', err);
