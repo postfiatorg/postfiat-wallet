@@ -281,7 +281,7 @@ async def initialize_tasks(account: str):
 async def start_refresh(account: str):
     """Start a background refresh loop for a user account"""
     try:
-        await task_storage.start_background_refresh(account)
+        await task_storage.start_refresh_loop(account)
         return {"status": "success"}
     except Exception as e:
         error_message = str(e)
