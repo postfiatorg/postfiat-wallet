@@ -185,41 +185,6 @@ class TaskStorage:
             self._refresh_tasks[wallet_address].cancel()
             del self._refresh_tasks[wallet_address]
 
-    async def get_user_tasks(
-        self, 
-        wallet_address: str,
-        start_ledger: Optional[int] = None,
-        end_ledger: Optional[int] = None
-    ) -> List[Message]:
-        """
-        Returns a fresh list of decoded TaskNode messages directly by streaming from the
-        XRPL (using the caching client). This does not solely rely on in-memory state,
-        but directly returns messages from the underlying XRPL/cached data.
-        
-        If start_ledger or end_ledger are None, defaults are used (earliest / latest).
-        """
-        if start_ledger is None:
-            start_ledger = EARLIEST_LEDGER_SEQ
-        if end_ledger is None:
-            end_ledger = -1
-
-        logger.info(f"Fetching user tasks for {wallet_address} from {start_ledger} to {end_ledger}")
-        msgs = []
-        try:
-            # First get the transactions using the available method
-            async for txn in self.client.get_account_txns(
-                account=wallet_address,
-                start_ledger=start_ledger,
-                end_ledger=end_ledger
-            ):
-                # Then decode them into messages using the task codec
-                if msg := decode_account_txn(txn, node_account=wallet_address):
-                    msgs.append(msg)
-        except Exception as e:
-            logger.error(f"Error getting messages for {wallet_address}: {e}")
-            raise
-        return msgs
-
     async def get_tasks_by_state(
         self,
         wallet_address: str,
