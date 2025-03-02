@@ -45,6 +45,10 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   const [messagesDecrypted, setMessagesDecrypted] = useState(false);
   const [sessionPassword, setSessionPassword] = useState<string | null>(null);
 
+  // Add this new state variable near other state declarations
+  const [isDecrypting, setIsDecrypting] = useState(false);
+  const [decryptPassword, setDecryptPassword] = useState('');
+
   const [threads, setThreads] = useState<Thread[]>([
     {
       address: ODV_ADDRESS,
@@ -304,12 +308,9 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
 
   // Execute sending log with confirmed password
   const executeSendLog = async (password: string) => {
-    if (!newMessage.trim() || !address) {
-      setError('Please enter a log message');
-      return;
-    }
-    
     setIsLoading(true);
+    setError(null);
+    
     try {
       const response = await fetch('http://localhost:8000/api/odv/send_log', {
         method: 'POST',
@@ -320,47 +321,43 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
           account: address,
           password: password,
           log_content: newMessage.trim(),
-          amount_pft: 0 // Default to 0 PFT
+          amount_pft: 1.0  // Update to send 1 PFT with logs, same as messages
         }),
       });
       
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to send log entry: ${text}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to send log: ${errorText}`);
       }
       
       const data = await response.json();
       
-      if (data.status === 'success') {
-        // Add message to UI immediately (optimistic update)
-        const newMsg: Message = {
-          id: data.log_id,
-          from: address,
-          to: ODV_ADDRESS,
-          content: newMessage.trim(),
-          timestamp: Date.now()
-        };
-        
-        setMessages(prev => [...prev, newMsg]);
-        setNewMessage('');
-        
-        // Update thread with last message
-        setThreads(prev => prev.map(thread => 
-          thread.address === ODV_ADDRESS 
-            ? { 
-                ...thread, 
-                lastMessage: `Log: ${newMessage.trim()}`, 
-                timestamp: Date.now(),
-                unread: 0
-              }
-            : thread
-        ));
+      // Add the message to the UI immediately
+      const newMsg: Message = {
+        id: `local_${Date.now()}`,
+        from: address,
+        to: ODV_ADDRESS,
+        content: newMessage.trim(),
+        timestamp: Date.now()
+      };
+      
+      setMessages(prev => [...prev, newMsg]);
+      setNewMessage('');
+      
+      // Store password for the session
+      if (!sessionPassword) {
+        setSessionPassword(password);
       }
+      
+      // Feedback to user
+      console.log('Log sent:', data);
+      
+      // Refresh after a short delay
+      setTimeout(() => fetchMessages(), 2000);
+      
     } catch (err) {
-      console.error('Error sending log entry:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      setPasswordError(err instanceof Error ? err.message : 'Failed to send log entry');
-      throw err; // Re-throw to handle in calling function
+      console.error('Error sending log:', err);
+      setError((err as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -435,8 +432,9 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     }
   };
   
-  // Add specific handler for decrypt
+  // Update the handleDecrypt function to show loading state
   const handleDecrypt = async (password: string) => {
+    setIsDecrypting(true); // Set decrypt button to loading state
     try {
       await fetchMessages(password);
       setShowDecryptModal(false);
@@ -444,6 +442,8 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     } catch (err) {
       console.error('Error decrypting messages:', err);
       setDecryptError(err instanceof Error ? err.message : 'Failed to decrypt messages');
+    } finally {
+      setIsDecrypting(false); // Reset decrypt button state
     }
   };
   
@@ -732,19 +732,59 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
         error={passwordError}
       />
       
-      {/* New decrypt modal */}
-      <DecryptMessagesModal
-        isOpen={showDecryptModal}
-        onClose={() => {
-          setShowDecryptModal(false);
-          // If user cancels, we might want to show a placeholder UI
-          if (!messagesDecrypted) {
-            setError("Messages are encrypted. Please decrypt to view them.");
-          }
-        }}
-        onDecrypt={handleDecrypt}
-        error={decryptError}
-      />
+      {/* Decrypt Modal */}
+      {showDecryptModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 p-6 rounded-lg max-w-md w-full">
+            <h3 className="text-lg font-medium text-slate-200 mb-4">Decrypt Messages</h3>
+            <p className="text-slate-400 mb-4">
+              Enter your wallet password to decrypt messages
+            </p>
+            
+            {decryptError && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm">
+                {decryptError}
+              </div>
+            )}
+            
+            <input
+              type="password"
+              className="w-full p-2 bg-slate-700 border border-slate-600 rounded mb-4 text-slate-200"
+              placeholder="Enter your password"
+              value={decryptPassword}
+              onChange={(e) => setDecryptPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleDecrypt(decryptPassword)}
+            />
+            
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDecryptModal(false)}
+                className="px-4 py-2 bg-slate-700 text-slate-300 rounded hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDecrypt(decryptPassword)}
+                disabled={isDecrypting || !decryptPassword.trim()}
+                className={`px-4 py-2 rounded flex items-center justify-center min-w-[100px] ${
+                  isDecrypting || !decryptPassword.trim()
+                    ? 'bg-blue-700/50 text-blue-300/50 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {isDecrypting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-300 border-t-transparent mr-2"></div>
+                    Decrypting...
+                  </>
+                ) : (
+                  'Decrypt'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

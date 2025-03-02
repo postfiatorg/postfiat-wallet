@@ -18,9 +18,12 @@ import uuid
 from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo
 from postfiat.nodes.task.codecs.v0.remembrancer.encode import encode_account_msg
 from postfiat.nodes.task.models.messages import UserLogMessage, Direction
+from decimal import Decimal
 
-REMEMBRANCER_ADDRESS = "rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn"
-REMEMBRANCER_PUBKEY = "ED5C677D5039D7412E2B978268F55C77937F9088C29028BEBFD0BCEA574DD7FF90"  
+# Import SDK constants and models
+from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
+
+REMEMBRANCER_PUBKEY = "ED5C677D5039D7412E2B978268F55C77937F9088C29028BEBFD0BCEA574DD7FF90"
 
 TASK_NODE_PUBKEY = "ED81962C730DDDA7AD72936142ABCCE0F2E3F7C562D6F38D8C50B74CB4EA0BE0A9"
 TASK_NODE_ADDRESS = "r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD"
@@ -252,32 +255,42 @@ async def generate_wallet(request: Request):
 
 @router.post("/tasks/initialize/{account}")
 async def initialize_tasks(account: str):
-    """
-    Fetch all historical tasks/messages for this account
-    and store them in memory for querying.
-    """
-    logger.info(f"Received initialize tasks request for account: {account}")
+    """Initialize task storage for a user account"""
     try:
         await task_storage.initialize_user_tasks(account)
-        logger.info(f"Successfully initialized tasks for account: {account}")
         return {"status": "success"}
     except Exception as e:
-        logger.error(f"Error initializing tasks for {account}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_message = str(e)
+        logger.warning(f"Task initialization for {account} encountered an issue: {error_message}")
+        
+        # Check for the specific ledger range error
+        if "ledgerSeqMinOutOfRange" in error_message:
+            return {
+                "status": "partial_success",
+                "message": "Initialized with limited history due to ledger range constraints",
+                "warning": "Some older transactions may not be available from the XRPL node"
+            }
+        
+        # For other errors, return a proper error response but don't crash
+        return {
+            "status": "error",
+            "message": f"Failed to initialize tasks: {error_message}"
+        }
 
 @router.post("/tasks/start-refresh/{account}")
-async def start_task_refresh(account: str):
-    """
-    Start the background refresh loop for this account.
-    This will automatically update tasks in memory as new messages arrive.
-    """
+async def start_refresh(account: str):
+    """Start a background refresh loop for a user account"""
     try:
-        await task_storage.start_refresh_loop(account)
-        logger.debug(f"Started refresh loop for account: {account}")
+        await task_storage.start_background_refresh(account)
         return {"status": "success"}
     except Exception as e:
-        logger.error(f"Error starting refresh for {account}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_message = str(e)
+        logger.warning(f"Failed to start task refresh for {account}: {error_message}")
+        
+        return {
+            "status": "error",
+            "message": f"Failed to start refresh: {error_message}"
+        }
 
 @router.post("/tasks/stop-refresh/{account}")
 async def stop_task_refresh(account: str):
@@ -295,49 +308,20 @@ async def stop_task_refresh(account: str):
 
 @router.get("/tasks/{account}")
 async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
-    """
-    Get all tasks for an account, optionally filtered by status.
-    """
-    logger.debug(f"Received tasks request for account: {account}, status filter: {status}")
+    """Get tasks for a user account, optionally filtered by status"""
     try:
-        # First ensure tasks are initialized
-        if not task_storage._state.node_account:
-            logger.debug(f"Account {account} not initialized, initializing now...")
-            await task_storage.initialize_user_tasks(account)
-        
-        # Convert API enum to internal enum if status is provided
-        internal_status = TaskStatus[status.name] if status else None
-        
-        if status:
-            tasks = await task_storage.get_tasks_by_state(account, internal_status)
-            
-            # Log task structure for the first task to help debug
-            if tasks and len(tasks) > 0:
-                logger.debug(f"Task keys available: {list(tasks[0].keys())}")
-                sample = {k: "..." for k in tasks[0].keys()}
-                if 'message_history' in tasks[0] and tasks[0]['message_history']:
-                    sample['message_history'] = [tasks[0]['message_history'][0]]
-                    if 'timestamp' in tasks[0]['message_history'][0]:
-                        logger.debug("Message history items now include timestamp field")
-                logger.debug(f"Sample task structure: {json.dumps(sample, default=str)}")
-            
-            return tasks
-        else:
-            sections = await task_storage.get_tasks_by_ui_section(account)
-            
-            # Log a sample task from each section if available
-            for section, section_tasks in sections.items():
-                if section_tasks and len(section_tasks) > 0:
-                    logger.debug(f"Section '{section}' has {len(section_tasks)} tasks")
-                    if section == 'requested' or section == 'completed':  # Just log a couple sections
-                        sample = {k: "..." for k in section_tasks[0].keys()}
-                        logger.debug(f"Sample task from '{section}' section: {json.dumps(sample, default=str)}")
-            
-            return sections
-            
+        tasks = await task_storage.get_user_tasks(account, status.value if status else None)
+        return {"tasks": tasks}
     except Exception as e:
-        logger.error(f"Error getting tasks for {account}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        error_message = str(e)
+        logger.warning(f"Error retrieving tasks for {account}: {error_message}")
+        
+        # Return empty tasks with error message instead of throwing exception
+        return {
+            "tasks": [],
+            "status": "error",
+            "message": f"Failed to retrieve tasks: {error_message}"
+        }
 
 @router.get("/tasks/statuses")
 async def get_task_statuses():
@@ -695,7 +679,7 @@ async def get_wallet_seed(req: SeedRequest):
 @router.post("/odv/send_message")
 async def send_odv_message(request: ODVMessageRequest):
     """
-    Send a message to the ODV node
+    Send a message to the ODV node using the SDK's encoding and encryption
     """
     try:
         # Get wallet info and decrypt the seed
@@ -715,7 +699,7 @@ async def send_odv_message(request: ODVMessageRequest):
             
         # Create user wallet from seed
         user_wallet = blockchain.create_wallet_from_seed(seed)
-        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}, public key: {user_wallet.public_key}")
+        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}")
         
         # Create a message ID if not provided
         message_id = request.message_id or f"user_msg_{uuid.uuid4()}"
@@ -725,53 +709,24 @@ async def send_odv_message(request: ODVMessageRequest):
         if not message_content.startswith("ODV "):
             message_content = f"ODV {message_content}"
         
-        logger.debug(f"Creating user log message - ID: {message_id}, Content: {message_content}, Amount: {request.amount_pft}")
+        logger.debug(f"Sending ODV message: {message_id}")
         
-        # Create the message using UserLogMessage directly
-        user_log_message = UserLogMessage(
+        # Convert amount to Decimal for SDK compatibility
+        amount_pft = Decimal(str(request.amount_pft))
+        
+        # Use the blockchain service method to encode and send the message
+        results = await blockchain.encode_and_send_user_message(
+            user_wallet=user_wallet,
             message_id=message_id,
-            message=message_content,
-            user_wallet=user_wallet.classic_address,
-            node_wallet=REMEMBRANCER_ADDRESS,
-            amount_pft=request.amount_pft,
-            direction=Direction.USER_TO_NODE
+            message_content=message_content,
+            node_address=REMEMBRANCER_ADDRESS,
+            node_pubkey=REMEMBRANCER_PUBKEY,
+            amount_pft=amount_pft
         )
         
-        logger.debug("Encoding message using encode_account_msg")
-        # Use encode_account_msg to handle encryption, compression, and chunking
-        encoded_txns = encode_account_msg(
-            msg=user_log_message,
-            node_account=REMEMBRANCER_PUBKEY,  # Pass the node's public key
-            user_account=user_wallet  # Pass the user's wallet instance
-        )
-        
-        if not encoded_txns:
-            raise ValueError("Failed to encode message to node")
-        
-        logger.debug(f"Encoded to {len(encoded_txns)} transactions")
-        
-        # Sign and send each transaction
-        results = []
-        for i, tx in enumerate(encoded_txns):
-            logger.debug(f"Signing transaction {i+1}")
-            
-            # Sign the transaction with the user's wallet
-            try:
-                signed_tx = await blockchain.sign_odv_transaction(tx, user_wallet)
-                logger.debug(f"Successfully signed transaction {i+1}")
-                
-                # Submit the transaction to the network
-                logger.debug(f"Submitting transaction {i+1}")
-                submit_result = await blockchain.submit_transaction(signed_tx)
-                logger.debug(f"Submission result for transaction {i+1}: {submit_result}")
-                results.append(submit_result)
-            except Exception as tx_error:
-                logger.error(f"Failed on transaction {i+1}: {str(tx_error)}", exc_info=True)
-                raise
-                
         return {
             "status": "success",
-            "message": f"Sent {len(encoded_txns)} transactions",
+            "message": f"Sent {len(results)} transactions",
             "results": results
         }
         
@@ -878,7 +833,7 @@ async def get_odv_messages(account: str):
 @router.post("/odv/send_log")
 async def send_log_entry(request: LoggingRequest):
     """
-    Send a logging entry to the Remembrancer node.
+    Send a logging entry to the Remembrancer node using the SDK's encoding and encryption.
     This is a one-way message that doesn't expect a response.
     """
     try:
@@ -899,58 +854,29 @@ async def send_log_entry(request: LoggingRequest):
             
         # Create user wallet from seed
         user_wallet = blockchain.create_wallet_from_seed(seed)
-        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}, public key: {user_wallet.public_key}")
+        logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}")
         
         # Create a log ID if not provided
         log_id = request.log_id or f"log_{uuid.uuid4()}"
         
-        logger.debug(f"Creating user logging entry - ID: {log_id}, Content: {request.log_content}, Amount: {request.amount_pft}")
+        logger.debug(f"Sending log entry: {log_id}")
         
-        # Create the logging message using UserLogMessage directly
-        log_message = UserLogMessage(
+        # Convert amount to Decimal for SDK compatibility
+        amount_pft = Decimal(str(request.amount_pft))
+        
+        # Use the blockchain service method to encode and send the log
+        results = await blockchain.encode_and_send_user_message(
+            user_wallet=user_wallet,
             message_id=log_id,
-            message=request.log_content,
-            user_wallet=user_wallet.classic_address,
-            node_wallet=REMEMBRANCER_ADDRESS,
-            amount_pft=request.amount_pft,
-            direction=Direction.USER_TO_NODE
+            message_content=request.log_content,
+            node_address=REMEMBRANCER_ADDRESS,
+            node_pubkey=REMEMBRANCER_PUBKEY,
+            amount_pft=amount_pft
         )
         
-        logger.debug("Encoding log entry using encode_account_msg")
-        # Use encode_account_msg to handle encryption, compression, and chunking
-        encoded_txns = encode_account_msg(
-            msg=log_message,
-            node_account=REMEMBRANCER_PUBKEY,  # Pass the node's public key
-            user_account=user_wallet  # Pass the user's wallet instance
-        )
-        
-        if not encoded_txns:
-            raise ValueError("Failed to encode log entry to node")
-        
-        logger.debug(f"Encoded to {len(encoded_txns)} transactions")
-        
-        # Sign and send each transaction
-        results = []
-        for i, tx in enumerate(encoded_txns):
-            logger.debug(f"Signing transaction {i+1}")
-            
-            # Sign the transaction with the user's wallet
-            try:
-                signed_tx = await blockchain.sign_odv_transaction(tx, user_wallet)
-                logger.debug(f"Successfully signed transaction {i+1}")
-                
-                # Submit the transaction to the network
-                logger.debug(f"Submitting transaction {i+1}")
-                submit_result = await blockchain.submit_transaction(signed_tx)
-                logger.debug(f"Submission result for transaction {i+1}: {submit_result}")
-                results.append(submit_result)
-            except Exception as tx_error:
-                logger.error(f"Failed on transaction {i+1}: {str(tx_error)}", exc_info=True)
-                raise
-                
         return {
             "status": "success",
-            "message": f"Sent {len(encoded_txns)} transactions",
+            "message": f"Sent {len(results)} transactions",
             "results": results
         }
         
