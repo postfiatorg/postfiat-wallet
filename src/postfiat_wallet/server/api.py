@@ -255,42 +255,34 @@ async def generate_wallet(request: Request):
 
 @router.post("/tasks/initialize/{account}")
 async def initialize_tasks(account: str):
-    """Initialize task storage for a user account"""
+    """
+    Fetch all historical tasks/messages for this account
+    and store them in memory for querying.
+    """
+    logger.info(f"Received initialize tasks request for account: {account}")
     try:
         await task_storage.initialize_user_tasks(account)
+        logger.info(f"Successfully initialized tasks for account: {account}")
         return {"status": "success"}
     except Exception as e:
-        error_message = str(e)
-        logger.warning(f"Task initialization for {account} encountered an issue: {error_message}")
+        logger.error(f"Error initializing tasks for {account}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
         
-        # Check for the specific ledger range error
-        if "ledgerSeqMinOutOfRange" in error_message:
-            return {
-                "status": "partial_success",
-                "message": "Initialized with limited history due to ledger range constraints",
-                "warning": "Some older transactions may not be available from the XRPL node"
-            }
-        
-        # For other errors, return a proper error response but don't crash
-        return {
-            "status": "error",
-            "message": f"Failed to initialize tasks: {error_message}"
-        }
 
 @router.post("/tasks/start-refresh/{account}")
 async def start_refresh(account: str):
-    """Start a background refresh loop for a user account"""
+    """
+    Start the background refresh loop for this account.
+    This will automatically update tasks in memory as new messages arrive.
+    """
     try:
         await task_storage.start_refresh_loop(account)
+        logger.debug(f"Started refresh loop for account: {account}")
         return {"status": "success"}
     except Exception as e:
-        error_message = str(e)
-        logger.warning(f"Failed to start task refresh for {account}: {error_message}")
+        logger.error(f"Error starting refresh for {account}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
         
-        return {
-            "status": "error",
-            "message": f"Failed to start refresh: {error_message}"
-        }
 
 @router.post("/tasks/stop-refresh/{account}")
 async def stop_task_refresh(account: str):
@@ -308,20 +300,49 @@ async def stop_task_refresh(account: str):
 
 @router.get("/tasks/{account}")
 async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
-    """Get tasks for a user account, optionally filtered by status"""
+    """
+    Get all tasks for an account, optionally filtered by status.
+    """
+    logger.debug(f"Received tasks request for account: {account}, status filter: {status}")
     try:
-        tasks = await task_storage.get_user_tasks(account, status.value if status else None)
-        return {"tasks": tasks}
-    except Exception as e:
-        error_message = str(e)
-        logger.warning(f"Error retrieving tasks for {account}: {error_message}")
+        # First ensure tasks are initialized
+        if not task_storage._state.node_account:
+            logger.debug(f"Account {account} not initialized, initializing now...")
+            await task_storage.initialize_user_tasks(account)
         
-        # Return empty tasks with error message instead of throwing exception
-        return {
-            "tasks": [],
-            "status": "error",
-            "message": f"Failed to retrieve tasks: {error_message}"
-        }
+        # Convert API enum to internal enum if status is provided
+        internal_status = TaskStatus[status.name] if status else None
+        
+        if status:
+            tasks = await task_storage.get_tasks_by_state(account, internal_status)
+            
+            # Log task structure for the first task to help debug
+            if tasks and len(tasks) > 0:
+                logger.debug(f"Task keys available: {list(tasks[0].keys())}")
+                sample = {k: "..." for k in tasks[0].keys()}
+                if 'message_history' in tasks[0] and tasks[0]['message_history']:
+                    sample['message_history'] = [tasks[0]['message_history'][0]]
+                    if 'timestamp' in tasks[0]['message_history'][0]:
+                        logger.debug("Message history items now include timestamp field")
+                logger.debug(f"Sample task structure: {json.dumps(sample, default=str)}")
+            
+            return tasks
+        else:
+            sections = await task_storage.get_tasks_by_ui_section(account)
+            
+            # Log a sample task from each section if available
+            for section, section_tasks in sections.items():
+                if section_tasks and len(section_tasks) > 0:
+                    logger.debug(f"Section '{section}' has {len(section_tasks)} tasks")
+                    if section == 'requested' or section == 'completed':  # Just log a couple sections
+                        sample = {k: "..." for k in section_tasks[0].keys()}
+                        logger.debug(f"Sample task from '{section}' section: {json.dumps(sample, default=str)}")
+            
+            return sections
+            
+    except Exception as e:
+        logger.error(f"Error getting tasks for {account}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tasks/statuses")
 async def get_task_statuses():
