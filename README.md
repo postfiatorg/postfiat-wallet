@@ -51,6 +51,8 @@ The wallet depends on several Python packages including:
 - click
 - xrpl-py
 - cryptography
+- requests
+- packaging
 - postfiat-sdk
 
 These will be automatically installed when you install the wallet package.
