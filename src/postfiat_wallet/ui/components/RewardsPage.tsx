@@ -2,6 +2,7 @@
 
 import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { apiService } from '../services/apiService';
 
 interface MessageHistoryItem {
   direction: string;
@@ -14,6 +15,13 @@ interface FinishedTask {
   pft_rewarded?: number;
   pft_offered?: number;
   status?: string;
+}
+
+// Add this interface for typing the API response
+interface TasksResponse {
+  rewarded: FinishedTask[];
+  refused: FinishedTask[];
+  [key: string]: any[];  // For any other task categories
 }
 
 const FinishedTasksPage = () => {
@@ -31,12 +39,7 @@ const FinishedTasksPage = () => {
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to fetch tasks: ${text}`);
-      }
-      const data = await response.json();
+      const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
 
       // Get both rewarded and refused tasks
       let finishedTasks = [...(data.rewarded || []), ...(data.refused || [])];

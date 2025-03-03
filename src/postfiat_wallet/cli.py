@@ -7,6 +7,7 @@ import importlib.metadata
 from packaging import version
 from pathlib import Path
 import logging
+import socket
 from .server.app import create_app
 from .utils.browser import launch_browser
 from .utils.updater import UIUpdater
@@ -42,6 +43,21 @@ def cli(debug):
     log_level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(level=log_level)
 
+def find_available_port(start_port):
+    """Find an available port starting from start_port"""
+    port = start_port
+    while True:
+        try:
+            # Try to create a socket and bind to the port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('localhost', port))
+                return port
+        except OSError:
+            # Port is in use, try the next one
+            port += 1
+            if port > 65535:  # Maximum port number
+                raise RuntimeError("No available ports found")
+
 @cli.command()
 @click.option('--port', default=None, help='Port to run server on')
 @click.option('--no-browser', is_flag=True, help='Don\'t open browser window')
@@ -57,6 +73,13 @@ def start(port, no_browser, no_updates, dev):
     # Use configured port if none specified
     if port is None:
         port = settings.SERVER["port"]
+    
+    # Find an available port if necessary
+    try:
+        port = find_available_port(port)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}")
+        sys.exit(1)
 
     # Create and configure FastAPI app
     app = create_app()

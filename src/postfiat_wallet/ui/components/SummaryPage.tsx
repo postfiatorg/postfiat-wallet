@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/custom-card';
 import { AuthContext } from '@/context/AuthContext';
+import { apiService } from '../services/apiService';
 
 interface AccountSummary {
   xrp_balance: number;
@@ -24,6 +25,23 @@ interface AccountStatus {
   is_blacklisted: boolean;
   init_rite_statement: string | null;
   sweep_address: string | null;
+}
+
+// Add this interface for tasks response
+interface TasksResponse {
+  requested: any[];
+  proposed: any[];
+  accepted: any[];
+  challenged: any[];
+  completed: any[];
+  refused: any[];
+  [key: string]: any[];  // For any other task categories
+}
+
+// Add this interface near other interfaces at the top of the file
+interface DecryptionResponse {
+  status: string;
+  link: string;
 }
 
 const SummaryPage = () => {
@@ -55,24 +73,12 @@ const SummaryPage = () => {
   // Add a new function to decrypt the link
   const decryptDocumentLink = async (encryptedLink: string, password: string) => {
     try {
-      const response = await fetch('http://localhost:8000/api/decrypt/doc_link', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          account: address,
-          password,
-          encrypted_link: encryptedLink
-        }),
+      const data = await apiService.post<DecryptionResponse>('/decrypt/doc_link', {
+        account: address,
+        password,
+        encrypted_link: encryptedLink
       });
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to decrypt link: ${errorText}`);
-      }
-      
-      const data = await response.json();
       return data.link;
     } catch (error) {
       console.error('Error decrypting link:', error);
@@ -129,16 +135,7 @@ const SummaryPage = () => {
       
       console.log("Fetching summary for address:", address);
       try {
-        const response = await fetch(`http://localhost:8000/api/account/${address}/summary`);
-        console.log("API Response:", response);
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("API Error:", errorText);
-          throw new Error(`Failed to fetch account summary: ${errorText}`);
-        }
-        
-        const data = await response.json();
+        const data = await apiService.get<AccountSummary>(`/account/${address}/summary`);
         console.log("Received summary:", data);
         setSummary(data);
       } catch (err) {
@@ -163,16 +160,7 @@ const SummaryPage = () => {
       
       console.log("Fetching account status for address:", address);
       try {
-        const response = await fetch(`http://localhost:8000/api/account/${address}/status?refresh=true`);
-        console.log("Status API Response:", response);
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Status API Error:", errorText);
-          throw new Error(`Failed to fetch account status: ${errorText}`);
-        }
-        
-        const data = await response.json();
+        const data = await apiService.get<AccountStatus>(`/account/${address}/status?refresh=true`);
         console.log("Received account status data:", JSON.stringify(data, null, 2));
         setAccountStatus(data);
       } catch (err) {
@@ -192,13 +180,7 @@ const SummaryPage = () => {
       const fetchTasks = async () => {
         try {
           setLoadingTasks(true);
-          const response = await fetch(`http://localhost:8000/api/tasks/${address}`);
-          
-          if (!response.ok) {
-            throw new Error(`Failed to fetch tasks: ${response.statusText}`);
-          }
-          
-          const data = await response.json();
+          const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
           
           // Combine tasks from all sections into a single array
           const allTasks = [

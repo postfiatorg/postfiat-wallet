@@ -1,4 +1,17 @@
 import { useState } from 'react';
+import { apiService } from '../services/apiService';
+
+// Add this interface near the top of the file
+interface AuthResponse {
+  address: string;
+  // Add other fields returned by the API as needed
+}
+
+// Add this interface for wallet generation response
+interface WalletResponse {
+  private_key: string;
+  address: string;
+}
 
 export default function AuthPage({ onAuth }: { onAuth: (address: string, username: string, password: string) => void }) {
   const [mode, setMode] = useState<'signin' | 'signup' | 'generate'>('signin');
@@ -23,56 +36,33 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
 
     let endpoint = '';
     if (mode === 'signin') {
-      endpoint = `/api/auth/signin`;
+      endpoint = `/auth/signin`;
     } else if (mode === 'generate') {
-      endpoint = `/api/auth/create`;
+      endpoint = `/auth/create`;
     } else {
       setError('Invalid mode for submission.');
       return;
     }
 
     try {
-      console.log(`Sending POST request to http://localhost:8000${endpoint}`);
-      const response = await fetch(`http://localhost:8000${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username,
-          password,
-          ...(mode === 'generate' && { 
-            private_key: privateKey,
-            address: address 
-          })
-        }),
+      console.log(`Sending POST request to ${endpoint}`);
+      const data = await apiService.post<AuthResponse>(endpoint, {
+        username,
+        password,
+        ...(mode === 'generate' && { 
+          private_key: privateKey,
+          address: address 
+        })
       });
 
-      console.log("Response for auth:", response);
-      if (!response.ok) {
-        const errorResponse = await response.json();
-        console.error("Auth error response:", errorResponse);
-        throw new Error(errorResponse.detail || 'Authentication failed');
-      }
-
-      const data = await response.json();
       console.log("Auth data:", data);
       
       // Initialize tasks after successful authentication
       try {
-        const initResponse = await fetch(`http://localhost:8000/api/tasks/initialize/${data.address}`, {
-          method: 'POST'
-        });
-        console.log('Response status:', initResponse.status);
-        console.log('Response headers:', Object.fromEntries(initResponse.headers));
-        
-        if (!initResponse.ok) {
-          const errorText = await initResponse.text();
-          console.error('Error response:', errorText);
-          throw new Error(`Failed to initialize tasks: ${errorText}`);
-        }
+        await apiService.post(`/tasks/initialize/${data.address}`);
+        console.log('Tasks initialized successfully');
       } catch (err) {
-        console.error('Fetch error:', err);
+        console.error('Task initialization error:', err);
         throw err;
       }
       
@@ -99,22 +89,9 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
   const handleGenerateWallet = async () => {
     console.log("handleGenerateWallet called");
     try {
-      console.log("Sending POST request to http://localhost:8000/api/wallet/generate");
-      const response = await fetch('http://localhost:8000/api/wallet/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      console.log("Sending wallet generation request");
+      const wallet = await apiService.post<WalletResponse>('/wallet/generate');
       
-      console.log("Response for wallet generation:", response);
-      if (!response.ok) {
-        const errorResponse = await response.json();
-        console.error("Wallet generation error response:", errorResponse);
-        throw new Error(errorResponse.detail || 'Failed to generate wallet');
-      }
-      
-      const wallet = await response.json();
       console.log("Wallet data:", wallet);
       setPrivateKey(wallet.private_key);
       setAddress(wallet.address);

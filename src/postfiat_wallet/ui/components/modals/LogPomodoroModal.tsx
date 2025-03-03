@@ -1,6 +1,13 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
+import { apiService } from '../../services/apiService';
+
+// Define interface for API response
+interface LogResponse {
+  transaction_hash?: string;
+  status: string;
+}
 
 interface LogPomodoroModalProps {
   isOpen: boolean;
@@ -52,21 +59,7 @@ const LogPomodoroModal = ({ isOpen, onClose, onSubmit, initialDetails }: LogPomo
         password: '[REDACTED]',
       });
 
-      const response = await fetch('http://localhost:8000/api/transaction/pf_log', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('PF Log error response:', errorData);
-        throw new Error(errorData.detail || 'Failed to send PF log transaction');
-      }
-
-      const result = await response.json();
+      const result = await apiService.post<LogResponse>('/transaction/pf_log', requestData);
       console.log('PF Log success response:', result);
 
       onSubmit(details);

@@ -1,11 +1,31 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { PaymentModal } from './modals/PaymentModal';
+import { apiService } from '../services/apiService';
+
+// Add interfaces for API responses
+interface PaymentResponse {
+  payments: Payment[];
+}
+
+interface Payment {
+  timestamp: string;
+  from_address: string;
+  to_address: string;
+  amount_xrp: number;
+  amount_pft: number;
+  hash: string;
+}
+
+interface TransactionResponse {
+  transaction_hash: string;
+  status: string;
+}
 
 const PaymentsPage = () => {
   const { address } = useContext(AuthContext);
   const [selectedToken, setSelectedToken] = useState('XRP');
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<Payment[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   
   // Form state
@@ -24,13 +44,9 @@ const PaymentsPage = () => {
     
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/payments/${address}`);
-      if (!response.ok) {
-        throw new Error('Failed to load payments');
-      }
-      const data = await response.json();
+      const data = await apiService.get<PaymentResponse>(`/payments/${address}`);
       
-      const sortedTransactions = data.payments.sort((a: any, b: any) => {
+      const sortedTransactions = data.payments.sort((a, b) => {
         return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
       });
       
@@ -66,25 +82,14 @@ const PaymentsPage = () => {
     setError('');
     
     try {
-      const response = await fetch('http://localhost:8000/api/transaction/payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from_account: address,
-          to_address: toAddress,
-          amount: amount,
-          currency: currency,
-          memo_id: memoId || undefined,
-          memo: memo || undefined
-        }),
+      await apiService.post<TransactionResponse>('/transaction/payment', {
+        from_account: address,
+        to_address: toAddress,
+        amount: amount,
+        currency: currency,
+        memo_id: memoId || undefined,
+        memo: memo || undefined
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to send payment');
-      }
 
       // Clear form
       setAmount('');

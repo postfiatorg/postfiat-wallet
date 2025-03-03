@@ -9,11 +9,22 @@ import RefuseTaskModal from './modals/RefuseTaskModal';
 import SubmitVerificationModal from './modals/SubmitVerificationModal';
 import FinalVerificationModal from './modals/FinalVerificationModal';
 import LogPomodoroModal from './modals/LogPomodoroModal';
+import { apiService } from '../services/apiService';
 
 // Add interface near top of file
 interface MessageHistoryItem {
   direction: string;
   data: string;
+}
+
+// Add interface for the tasks API response
+interface TasksResponse {
+  requested: any[];
+  proposed: any[];
+  accepted: any[];
+  challenged: any[];
+  refused: any[];
+  [key: string]: any[];  // For any other categories
 }
 
 const ProposalsPage = () => {
@@ -46,18 +57,12 @@ const ProposalsPage = () => {
     }
 
     setIsRefreshing(true);
+    setError(null); // Clear any previous errors
     try {
       // Add artificial delay for better UX
-      const [response] = await Promise.all([
-        fetch(`http://localhost:8000/api/tasks/${address}`),
-        new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
-      ]);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Minimum 1 second refresh
       
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to fetch tasks: ${text}`);
-      }
-      const data = await response.json();
+      const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
 
       // Combine tasks from allowed statuses
       let tasksToDisplay = [
@@ -77,11 +82,13 @@ const ProposalsPage = () => {
 
       tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
       setTasks(tasksToDisplay);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      // Instead of toast, set the error state
+      setError(error instanceof Error ? error.message : "Failed to fetch tasks");
     } finally {
-      setLoading(false);
       setIsRefreshing(false);
+      setLoading(false);
     }
   };
 
@@ -91,9 +98,7 @@ const ProposalsPage = () => {
 
     const startRefreshLoop = async () => {
       try {
-        await fetch(`http://localhost:8000/api/tasks/start-refresh/${address}`, {
-          method: 'POST'
-        });
+        await apiService.post(`/tasks/start-refresh/${address}`);
         console.log("Started task refresh loop");
       } catch (error) {
         console.error("Failed to start refresh loop:", error);
@@ -106,11 +111,10 @@ const ProposalsPage = () => {
     // Cleanup: stop the refresh loop when component unmounts
     return () => {
       if (address) {
-        fetch(`http://localhost:8000/api/tasks/stop-refresh/${address}`, {
-          method: 'POST'
-        }).catch(error => {
-          console.error("Failed to stop refresh loop:", error);
-        });
+        apiService.post(`/tasks/stop-refresh/${address}`)
+          .catch(error => {
+            console.error("Failed to stop refresh loop:", error);
+          });
       }
     };
   }, [isAuthenticated, address]);
@@ -460,10 +464,18 @@ const ProposalsPage = () => {
         {isAuthenticated && !address && (
           <div className="text-white">No wallet address found.</div>
         )}
-        {error && <div className="text-red-500">Error: {error}</div>}
+        
+        {/* Display error message if there is one */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-lg">
+            <p className="font-medium">Error:</p>
+            <p>{error}</p>
+          </div>
+        )}
+        
         {isAuthenticated && address && !loading && (
           <>
-            {/* Error Message */}
+            {/* Modal Error Message */}
             {modalError && (
               <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
                 <p className="text-red-400 text-sm">{modalError}</p>

@@ -2,6 +2,13 @@ import { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
 import { generateCustomId } from '../../utils/taskId';
+import { apiService } from '../../services/apiService';
+
+// Define interface for API response
+interface TransactionResponse {
+  hash?: string;
+  status: string;
+}
 
 interface RequestTaskModalProps {
   isOpen: boolean;
@@ -55,21 +62,7 @@ export function RequestTaskModal({ isOpen, onClose, onRequest, initialMessage }:
         password: '[REDACTED]'
       });
 
-      const response = await fetch('http://localhost:8000/api/transaction/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Full error response:', errorData);
-        throw new Error(errorData.detail || 'Failed to send transaction');
-      }
-
-      const result = await response.json();
+      const result = await apiService.post<TransactionResponse>('/transaction/send', requestData);
       console.log('Success response:', result);
 
       onRequest(message);

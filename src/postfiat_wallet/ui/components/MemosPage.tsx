@@ -2,6 +2,22 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { PasswordConfirmModal } from './modals/PasswordConfirmModal';
 import DecryptMessagesModal from './modals/DecryptMessagesModal';
+import { apiService } from '../services/apiService';
+
+// Add interfaces for API responses
+interface MessagesResponse {
+  status: string;
+  messages: Message[];
+}
+
+interface SendMessageResponse {
+  status: string;
+  message_id: string;
+}
+
+interface SendLogResponse {
+  status: string;
+}
 
 interface Message {
   id: string;
@@ -110,28 +126,15 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     try {
       // Add artificial delay for better UX
       const [response] = await Promise.all([
-        fetch(`http://localhost:8000/api/odv/messages/${address}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            password: passwordToUse
-          }),
+        apiService.post<MessagesResponse>(`/odv/messages/${address}`, {
+          password: passwordToUse
         }),
         new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
       ]);
       
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Failed to fetch messages: ${text}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.status === 'success') {
+      if (response.status === 'success') {
         // Transform API messages to our format
-        const apiMessages = data.messages.map((msg: any) => ({
+        const apiMessages = response.messages.map((msg: any) => ({
           id: msg.id,
           from: msg.from,
           to: msg.to,
@@ -234,7 +237,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       };
       
       console.log('Sending message request:', {
-        url: 'http://localhost:8000/api/odv/send_message',
+        url: '/odv/send_message',
         method: 'POST',
         body: JSON.stringify({
           ...requestData,
@@ -242,35 +245,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
         })
       });
       
-      const response = await fetch('http://localhost:8000/api/odv/send_message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      });
-      
-      // Log the raw response
-      const responseText = await response.text();
-      console.log('Raw response from server:', {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries([...response.headers.entries()]),
-        body: responseText
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to send message: ${responseText}`);
-      }
-      
-      // Parse the JSON response if valid
-      let data;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Failed to parse response as JSON:', parseError);
-        throw new Error(`Server returned invalid JSON: ${responseText}`);
-      }
+      const data = await apiService.post<SendMessageResponse>('/odv/send_message', requestData);
       
       console.log('Parsed response data:', data);
       
@@ -328,25 +303,12 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:8000/api/odv/send_log', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          account: address,
-          password: password,
-          log_content: newMessage.trim(),
-          amount_pft: 1.0  // Update to send 1 PFT with logs, same as messages
-        }),
+      const data = await apiService.post<SendLogResponse>('/odv/send_log', {
+        account: address,
+        password: password,
+        log_content: newMessage.trim(),
+        amount_pft: 1.0  // Update to send 1 PFT with logs, same as messages
       });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to send log: ${errorText}`);
-      }
-      
-      const data = await response.json();
       
       // Add the message to the UI immediately
       const newMsg: Message = {
