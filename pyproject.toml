@@ -17,6 +17,8 @@ dependencies = [
     "click",
     "xrpl-py",
     "cryptography",
+    "requests",
+    "packaging",
     "postfiat-sdk==0.1.0a202503022217",
 ]
 
