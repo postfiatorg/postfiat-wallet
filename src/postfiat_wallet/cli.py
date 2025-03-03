@@ -59,7 +59,7 @@ def find_available_port(start_port):
                 raise RuntimeError("No available ports found")
 
 @cli.command()
-@click.option('--port', default=None, help='Port to run server on')
+@click.option('--port', default=None, help='Port to run server on (defaults to 28080 if available)')
 @click.option('--no-browser', is_flag=True, help='Don\'t open browser window')
 @click.option('--no-updates', is_flag=True, help='Skip update checks')
 @click.option('--dev', is_flag=True, help='Run in development mode')
@@ -72,11 +72,15 @@ def start(port, no_browser, no_updates, dev):
         
     # Use configured port if none specified
     if port is None:
-        port = settings.SERVER["port"]
+        # Use a less common port range (28080+) to avoid conflicts
+        port = getattr(settings.SERVER, "port", 28080)
     
     # Find an available port if necessary
+    original_port = port
     try:
         port = find_available_port(port)
+        if port != original_port:
+            click.echo(f"Port {original_port} is in use, using port {port} instead")
     except RuntimeError as e:
         click.echo(f"Error: {e}")
         sys.exit(1)

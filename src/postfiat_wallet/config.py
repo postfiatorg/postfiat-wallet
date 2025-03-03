@@ -4,7 +4,7 @@ from dynaconf import Dynaconf
 # Default settings
 DEFAULT_CONFIG = {
     "SERVER": {
-        "port": 8000
+        "port": 28080
     },
     "S3": {
         "bucket": "postfiat-www",
