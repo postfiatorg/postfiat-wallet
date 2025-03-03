@@ -15,7 +15,7 @@ import json
 from postfiat_wallet.services.odv_service import ODVService
 from xrpl.wallet import Wallet
 import uuid
-from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo
+from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo, encrypt_memo
 from postfiat.nodes.task.codecs.v0.remembrancer.encode import encode_account_msg
 from postfiat.nodes.task.models.messages import UserLogMessage, Direction
 from decimal import Decimal
@@ -598,11 +598,21 @@ async def perform_full_initiation_sequence(req: FullSequenceRequest):
         logger.info("Signing and sending handshake to remembrancer transaction...")
         handshake_remembrancer_result = await blockchain.sign_and_send_transaction(handshake_remembrancer_tx, seed)
 
-        # 5) Build and send the google doc transaction
-        logger.info("Building google doc transaction...")
+        # 5) Encrypt the Google Doc link and then build and send the transaction
+        logger.info("Encrypting and building google doc transaction...")
+        # Create user wallet from seed for encryption
+        user_wallet = blockchain.create_wallet_from_seed(seed)
+        
+        # Encrypt the Google Doc link using the node's public key
+        encrypted_link = encrypt_memo(
+            req.google_doc_link,
+            TASK_NODE_PUBKEY,  # Public key of the Task Node
+            user_wallet.private_key  # Private key of the user
+        )
+        
         google_doc_tx = transaction_builder.build_google_doc_transaction(
             account=req.account,
-            encrypted_data=req.google_doc_link,
+            encrypted_data=encrypted_link,  # Now actually encrypted
             username=req.username,
             use_pft=req.use_pft_for_doc
         )
