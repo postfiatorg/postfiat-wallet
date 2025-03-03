@@ -19,6 +19,9 @@ from postfiat.nodes.task.codecs.v0.serialization.cipher import decrypt_memo
 from postfiat.nodes.task.codecs.v0.remembrancer.encode import encode_account_msg
 from postfiat.nodes.task.models.messages import UserLogMessage, Direction
 from decimal import Decimal
+import random
+import string
+import datetime
 
 # Import SDK constants and models
 from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
@@ -150,6 +153,20 @@ class DecryptDocLinkRequest(BaseModel):
     account: str
     password: str
     encrypted_link: str
+
+# Add this function outside of any endpoint
+def generate_custom_id():
+    """
+    Generate a custom ID (task_id) for PostFiat usage.
+    Example format: 'YYYY-MM-DD_HH:MM__AB12'
+    """
+    letters = ''.join(random.choices(string.ascii_uppercase, k=2))
+    numbers = ''.join(random.choices(string.digits, k=2))
+    second_part = letters + numbers
+    date_string = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    output = date_string + '__' + second_part
+    output = output.replace(' ', "_")
+    return output
 
 @router.get("/health")
 def health_check():
@@ -722,8 +739,8 @@ async def send_odv_message(request: ODVMessageRequest):
         user_wallet = blockchain.create_wallet_from_seed(seed)
         logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}")
         
-        # Create a message ID if not provided
-        message_id = request.message_id or f"user_msg_{uuid.uuid4()}"
+        # Generate a custom message ID if not provided
+        message_id = request.message_id or generate_custom_id()
         
         # Prepend "ODV " to message if it doesn't already start with it
         message_content = request.message
@@ -735,16 +752,29 @@ async def send_odv_message(request: ODVMessageRequest):
         # Convert amount to Decimal for SDK compatibility
         amount_pft = Decimal(str(request.amount_pft))
         
-        # Use the blockchain service method to encode and send the message
-        results = await blockchain.encode_and_send_user_message(
-            user_wallet=user_wallet,
+        # Create a UserLogMessage object for encoding
+        user_message = UserLogMessage(
             message_id=message_id,
-            message_content=message_content,
-            node_address=REMEMBRANCER_ADDRESS,
-            node_pubkey=REMEMBRANCER_PUBKEY,
-            amount_pft=amount_pft
+            message=message_content,
+            user_wallet=user_wallet.classic_address,
+            node_wallet=REMEMBRANCER_ADDRESS,
+            amount_pft=amount_pft,
+            direction=Direction.USER_TO_NODE
         )
         
+        # Use the SDK function to encode the message into transactions
+        encoded_txns = encode_account_msg(
+            msg=user_message,
+            node_account=REMEMBRANCER_PUBKEY,  # Node's public key
+            user_account=user_wallet  # User's wallet object
+        )
+        
+        # Use RpcSender to submit each transaction
+        results = []
+        for tx in encoded_txns:
+            result = await blockchain.rpc_sender.submit_and_wait(tx, user_wallet)
+            results.append(result.result)
+            
         return {
             "status": "success",
             "message": f"Sent {len(results)} transactions",
@@ -878,7 +908,7 @@ async def send_log_entry(request: LoggingRequest):
         logger.debug(f"Created wallet for {request.account}, address: {user_wallet.classic_address}")
         
         # Create a log ID if not provided
-        log_id = request.log_id or f"log_{uuid.uuid4()}"
+        log_id = request.log_id or generate_custom_id()
         
         logger.debug(f"Sending log entry: {log_id}")
         
