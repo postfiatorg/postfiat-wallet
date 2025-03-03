@@ -88,6 +88,27 @@ const FinishedTasksPage = () => {
     return task.status === filter;
   });
 
+  // Get the proposal message from a task using more robust logic
+  const getProposalMessage = (task: FinishedTask) => {
+    if (!task.message_history?.length) return "No proposal available";
+    
+    // First, try to find a message that starts with "PROPOSED PF"
+    for (let i = 0; i < task.message_history.length; i++) {
+      const msg = task.message_history[i];
+      if (msg.data.startsWith("PROPOSED PF")) {
+        return msg.data;
+      }
+    }
+    
+    // If no "PROPOSED PF" message is found, fall back to index 1
+    if (task.message_history.length >= 2) {
+      return task.message_history[1].data;
+    }
+    
+    // Last resort fallback to index 0
+    return task.message_history[0].data;
+  };
+
   // Add this CSS at the top of your file or in your global styles
   const styles = `
     @keyframes fade-in {
@@ -231,10 +252,8 @@ const FinishedTasksPage = () => {
                     </tr>
                   ) : (
                     filteredTasks.map((task) => {
-                      // Get the proposal (message at index 1)
-                      const proposal = task.message_history && task.message_history.length > 1
-                        ? task.message_history[1].data
-                        : 'No proposal available';
+                      // Get the proposal using the new helper function
+                      const proposal = getProposalMessage(task);
                       
                       // For rewarded tasks, find the reward message (typically the last message)
                       const rewardMessage = task.status === 'rewarded' && task.message_history?.length > 1

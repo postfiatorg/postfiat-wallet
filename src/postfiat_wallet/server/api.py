@@ -839,21 +839,45 @@ async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
             user_wallet=user_wallet
         )
         
+        logger.debug(f"Retrieved {len(messages)} raw messages before deduplication")
+        
         # Format the messages for the frontend
         formatted_messages = []
+        seen_keys = set()  # Track message combinations we've already processed
+        
         for msg in messages:
             # Determine direction based on message type
             is_from_user = msg.get("direction") == "USER_TO_NODE"
             
+            # Create a more robust deduplication key that combines multiple fields
+            msg_id = msg.get("message_id", "")
+            content = msg.get("message", "")
+            timestamp = msg.get("timestamp", 0)
+            
+            # Create a deduplication key that includes content, direction and approximate timestamp
+            # Round timestamp to nearest minute to handle small differences in timestamps
+            minute_timestamp = int(timestamp / 60) * 60 if timestamp else 0
+            dedup_key = f"{content}|{is_from_user}|{minute_timestamp}"
+            
+            # Skip this message if we've already seen an identical one
+            if dedup_key in seen_keys:
+                logger.debug(f"Skipping duplicate message: {content[:30]}...")
+                continue
+                
+            # Add key to seen set
+            seen_keys.add(dedup_key)
+            
             formatted_messages.append({
-                "id": msg.get("message_id", "unknown"),
+                "id": msg_id or f"msg_{len(formatted_messages)}",
                 "from": account if is_from_user else REMEMBRANCER_ADDRESS,
                 "to": REMEMBRANCER_ADDRESS if is_from_user else account,
-                "content": msg.get("message", ""),
-                "timestamp": msg.get("timestamp", 0),
+                "content": content,
+                "timestamp": timestamp,
                 "amount_pft": msg.get("amount_pft", 0)
             })
-            
+        
+        logger.debug(f"After deduplication: {len(formatted_messages)} messages")
+        
         # Sort by timestamp
         formatted_messages.sort(key=lambda x: x["timestamp"])
         
@@ -866,7 +890,7 @@ async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
         logger.error(f"Error getting ODV messages: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# Keep the original GET endpoint for backward compatibility
+# Apply the same improved deduplication logic to the GET endpoint
 @router.get("/odv/messages/{account}")
 async def get_odv_messages(account: str):
     """
@@ -876,21 +900,44 @@ async def get_odv_messages(account: str):
         # Get messages from task storage - these are already decoded
         messages = await task_storage.get_user_node_messages(account, REMEMBRANCER_ADDRESS)
         
-        # Format the messages for the frontend
+        logger.debug(f"Retrieved {len(messages)} raw messages before deduplication")
+        
+        # Format the messages for the frontend with improved deduplication
         formatted_messages = []
+        seen_keys = set()  # Track message combinations we've already processed
+        
         for msg in messages:
             # Determine direction based on message type
             is_from_user = msg.get("direction") == "USER_TO_NODE"
             
+            # Create a more robust deduplication key that combines multiple fields
+            content = msg.get("message", "")
+            timestamp = msg.get("timestamp", 0)
+            
+            # Create a deduplication key that includes content, direction and approximate timestamp
+            # Round timestamp to nearest minute to handle small differences in timestamps
+            minute_timestamp = int(timestamp / 60) * 60 if timestamp else 0
+            dedup_key = f"{content}|{is_from_user}|{minute_timestamp}"
+            
+            # Skip this message if we've already seen an identical one
+            if dedup_key in seen_keys:
+                logger.debug(f"Skipping duplicate message: {content[:30]}...")
+                continue
+                
+            # Add key to seen set
+            seen_keys.add(dedup_key)
+            
             formatted_messages.append({
-                "id": msg.get("message_id", "unknown"),
+                "id": msg.get("message_id", "") or f"msg_{len(formatted_messages)}",
                 "from": account if is_from_user else REMEMBRANCER_ADDRESS,
                 "to": REMEMBRANCER_ADDRESS if is_from_user else account,
-                "content": msg.get("message", ""),
-                "timestamp": msg.get("timestamp", 0),
+                "content": content,
+                "timestamp": timestamp,
                 "amount_pft": msg.get("amount_pft", 0)
             })
-            
+        
+        logger.debug(f"After deduplication: {len(formatted_messages)} messages")
+        
         # Sort by timestamp
         formatted_messages.sort(key=lambda x: x["timestamp"])
         

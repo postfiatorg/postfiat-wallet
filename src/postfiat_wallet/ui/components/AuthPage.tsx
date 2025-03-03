@@ -67,6 +67,14 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
       }
       
       if (mode === 'generate') {
+        // Clear state for the new account
+        try {
+          await apiService.post(`/tasks/clear-state/${data.address}`);
+          console.log("Server state cleared for new account:", data.address);
+        } catch (error) {
+          console.error("Error clearing server state:", error);
+        }
+        
         // Clear form and switch to signin mode after successful account creation
         setUsername('');
         setPassword('');
