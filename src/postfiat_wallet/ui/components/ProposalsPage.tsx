@@ -251,12 +251,21 @@ const ProposalsPage = () => {
   const getMainMessage = (task: any) => {
     if (!task.message_history?.length) return "No message available";
     
-    // Always show the proposal message (index 1) if it exists
+    // For all tasks, find the first message that starts with "PROPOSED PF"
+    // This ensures we show the actual proposal content, not the request
+    for (let i = 0; i < task.message_history.length; i++) {
+      const msg = task.message_history[i];
+      if (msg.data.startsWith("PROPOSED PF")) {
+        return msg.data;
+      }
+    }
+    
+    // If no "PROPOSED PF" message is found, fall back to index 1
     if (task.message_history.length >= 2) {
       return task.message_history[1].data;
     }
     
-    // Fall back to first message if proposal message doesn't exist
+    // Last resort fallback to index 0
     return task.message_history[0].data;
   };
 
