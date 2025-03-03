@@ -1,6 +1,13 @@
 import { useState, useContext, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { PasswordConfirmModal } from './PasswordConfirmModal';
+import { apiService } from '../../services/apiService';
+
+// Define interface for API response
+interface PaymentResponse {
+  transaction_hash?: string;
+  status: string;
+}
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -56,39 +63,22 @@ export function PaymentModal({
     setError('');
     setIsSubmitting(true);
     try {
-      const response = await fetch('http://localhost:8000/api/transaction/payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from_account: address,
-          to_address: toAddress,
-          amount: amount,
-          currency: currency,
-          password: password,
-          memo_id: memoId || undefined,
-          memo: memo || undefined
-        }),
-      });
-
-      console.log('Payment request:', {
+      const requestData = {
         from_account: address,
         to_address: toAddress,
         amount: amount,
         currency: currency,
-        password: '[REDACTED]',
+        password: password,
         memo_id: memoId || undefined,
         memo: memo || undefined
+      };
+
+      console.log('Payment request:', {
+        ...requestData,
+        password: '[REDACTED]'
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Payment error response:', errorData);
-        throw new Error(errorData.detail || 'Failed to send payment');
-      }
-
-      const result = await response.json();
+      const result = await apiService.post<PaymentResponse>('/transaction/payment', requestData);
       console.log('Payment success response:', result);
 
       onClose();

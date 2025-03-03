@@ -1,6 +1,26 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { AuthContext } from '@/context/AuthContext';
 import { PasswordConfirmModal } from './modals/PasswordConfirmModal';
+import { apiService } from '@/services/apiService';
+
+// Define interfaces for API responses
+interface BalanceResponse {
+  xrp: string;
+  pft: string;
+}
+
+interface StatusResponse {
+  init_rite_status: string;
+}
+
+interface EcdhResponse {
+  ecdh_public_key: string;
+}
+
+interface InitiationResponse {
+  status: string;
+  message?: string;
+}
 
 interface OnboardingProps {
   initStatus: string;
@@ -26,8 +46,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
 
   const fetchBalance = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/balance/${address}`);
-      const data = await response.json();
+      const data = await apiService.get<BalanceResponse>(`/balance/${address}`);
       setBalance(data);
     } catch (error) {
       console.error('Error fetching balance:', error);
@@ -37,8 +56,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
   const checkInitStatus = async () => {
     try {
       // Simple status check without the balance-related logic
-      const response = await fetch(`http://localhost:8000/api/account/${address}/status?refresh=true`);
-      const data = await response.json();
+      const data = await apiService.get<StatusResponse>(`/account/${address}/status?refresh=true`);
       
       console.log("Status check result:", data);
       onCheckStatus({ init_rite_status: data.init_rite_status });
@@ -60,22 +78,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
 
     try {
       // First get the ECDH public key
-      const ecdhResponse = await fetch('http://localhost:8000/api/wallet/ecdhkey', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          account: address,
-          password: password
-        }),
+      const ecdhResponse = await apiService.post<EcdhResponse>('/wallet/ecdhkey', {
+        account: address,
+        password: password
       });
-
-      if (!ecdhResponse.ok) {
-        throw new Error('Failed to generate ECDH key');
-      }
-
-      const { ecdh_public_key } = await ecdhResponse.json();
 
       // Now submit the full initiation sequence
       const requestData = {
@@ -84,24 +90,12 @@ const Onboarding: React.FC<OnboardingProps> = ({ initStatus, address, onCheckSta
         username: username,
         initiation_rite: initiationRite,
         google_doc_link: googleDocLink,
-        ecdh_public_key: ecdh_public_key,
+        ecdh_public_key: ecdhResponse.ecdh_public_key,
         use_pft_for_doc: false
       };
 
-      const response = await fetch('http://localhost:8000/api/initiation/full-sequence', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      });
+      const result = await apiService.post<InitiationResponse>('/initiation/full-sequence', requestData);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to submit initiation');
-      }
-
-      const result = await response.json();
       console.log('Initiation submitted successfully:', result);
       
       // Set waiting for confirmation state

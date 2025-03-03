@@ -13,6 +13,13 @@ import { AuthProvider } from '@/context/AuthContext';
 import Onboarding from '@/components/Onboarding';
 import MemosPage from '@/components/MemosPage';
 import SettingsPage from '@/components/SettingsPage';
+import { apiService } from '@/services/apiService';
+
+// Define response interfaces for better type safety
+interface StatusResponse {
+  init_rite_status: string;
+  // Add other fields as needed
+}
 
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
@@ -47,10 +54,9 @@ export default function Home() {
         console.log('Checking init status for address:', auth.address);
         
         // Add timestamp to force a fresh fetch
-        const response = await fetch(
-          `http://localhost:8000/api/account/${auth.address}/status?refresh=true&nocache=${Date.now()}`
+        const data = await apiService.get<StatusResponse>(
+          `/account/${auth.address}/status?refresh=true&nocache=${Date.now()}`
         );
-        const data = await response.json();
         console.log('Initiation status response:', data);
         
         // Simply use the status as returned by the API
@@ -96,9 +102,7 @@ export default function Home() {
     // Call the server to clear state for this account
     if (auth.address) {
       try {
-        await fetch(`http://localhost:8000/api/tasks/clear-state/${auth.address}`, {
-          method: 'POST'
-        });
+        await apiService.post(`/tasks/clear-state/${auth.address}`);
         console.log("Server state cleared for account:", auth.address);
       } catch (error) {
         console.error("Error clearing server state:", error);

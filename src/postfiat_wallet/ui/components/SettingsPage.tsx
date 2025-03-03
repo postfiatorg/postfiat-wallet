@@ -1,5 +1,11 @@
 import React, { useState, useContext } from 'react';
 import { AuthContext } from '@/context/AuthContext';
+import { apiService } from '@/services/apiService';
+
+// Define interface for API response
+interface SeedResponse {
+  seed: string;
+}
 
 const SettingsPage: React.FC = () => {
   const { address, username } = useContext(AuthContext);
@@ -16,23 +22,11 @@ const SettingsPage: React.FC = () => {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:8000/api/wallet/seed', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          account: address,
-          password: password
-        }),
+      const data = await apiService.post<SeedResponse>('/wallet/seed', {
+        account: address,
+        password: password
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to retrieve seed');
-      }
-
-      const data = await response.json();
       setSeed(data.seed);
       setShowSeed(true);
       setPassword('');
