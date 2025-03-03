@@ -15,6 +15,10 @@ const SettingsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showSeed, setShowSeed] = useState(false);
   const [seedCopied, setSeedCopied] = useState(false);
+  const [isRemHandshakeLoading, setIsRemHandshakeLoading] = useState(false);
+  const [isNodeHandshakeLoading, setIsNodeHandshakeLoading] = useState(false);
+  const [handshakeError, setHandshakeError] = useState<string | null>(null);
+  const [handshakeSuccess, setHandshakeSuccess] = useState<string | null>(null);
 
   const handleRevealSeed = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,6 +50,42 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleHandshake = async (type: 'remembrancer' | 'node') => {
+    const endpoint = type === 'remembrancer' 
+      ? '/transaction/handshake_remembrancer' 
+      : '/transaction/handshake_node';
+    
+    setHandshakeError(null);
+    setHandshakeSuccess(null);
+    
+    if (type === 'remembrancer') {
+      setIsRemHandshakeLoading(true);
+    } else {
+      setIsNodeHandshakeLoading(true);
+    }
+    
+    try {
+      const result = await apiService.post(endpoint, {
+        account: address,
+        password: password,
+        ecdh_public_key: "placeholder"
+      });
+      
+      setHandshakeSuccess(`Successfully sent handshake to ${type}!`);
+      setPassword('');
+      
+    } catch (err) {
+      console.error(`Error sending handshake to ${type}:`, err);
+      setHandshakeError(err instanceof Error ? err.message : `Failed to send handshake to ${type}`);
+    } finally {
+      if (type === 'remembrancer') {
+        setIsRemHandshakeLoading(false);
+      } else {
+        setIsNodeHandshakeLoading(false);
+      }
+    }
+  };
+
   return (
     <div className="bg-slate-900 rounded-lg p-6 text-white">
       <h1 className="text-2xl font-bold mb-6">Account Settings</h1>
@@ -61,6 +101,64 @@ const SettingsPage: React.FC = () => {
             <div>
               <p className="text-sm text-gray-400">Wallet Address</p>
               <p className="font-mono text-sm break-all">{address}</p>
+            </div>
+          </div>
+
+          <h2 className="text-xl font-semibold mb-4">Network Connections</h2>
+          <div className="bg-slate-800 rounded-lg p-4 mb-6">
+            <p className="mb-4 text-sm text-gray-300">
+              Send handshake transactions to establish encrypted communication with network nodes.
+            </p>
+            
+            <div className="mb-4">
+              <label htmlFor="handshake-password" className="block text-sm font-medium text-gray-300 mb-1">
+                Enter your password to authorize handshakes
+              </label>
+              <input
+                type="password"
+                id="handshake-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
+              />
+            </div>
+            
+            {handshakeError && (
+              <div className="mb-4 p-3 bg-red-900/50 border border-red-800 rounded-md text-red-200 text-sm">
+                {handshakeError}
+              </div>
+            )}
+            
+            {handshakeSuccess && (
+              <div className="mb-4 p-3 bg-green-900/50 border border-green-800 rounded-md text-green-200 text-sm">
+                {handshakeSuccess}
+              </div>
+            )}
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => handleHandshake('remembrancer')}
+                disabled={isRemHandshakeLoading || isNodeHandshakeLoading || !password}
+                className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white py-2 px-4 rounded-md transition duration-200 flex justify-center items-center"
+              >
+                {isRemHandshakeLoading ? (
+                  <span>Sending...</span>
+                ) : (
+                  <span>Handshake Remembrancer</span>
+                )}
+              </button>
+              
+              <button
+                onClick={() => handleHandshake('node')}
+                disabled={isRemHandshakeLoading || isNodeHandshakeLoading || !password}
+                className="bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white py-2 px-4 rounded-md transition duration-200 flex justify-center items-center"
+              >
+                {isNodeHandshakeLoading ? (
+                  <span>Sending...</span>
+                ) : (
+                  <span>Handshake Task Node</span>
+                )}
+              </button>
             </div>
           </div>
         </div>

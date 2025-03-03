@@ -175,8 +175,20 @@ const ProposalsPage = () => {
     let verificationPrompt = '';
     if (modalType === 'verify' || modalType === 'finalVerify') {
       const selectedTask = tasks.find(task => task.id === selectedTaskId);
-      if (selectedTask?.message_history?.length >= 5) {
-        verificationPrompt = selectedTask.message_history[4].data;
+      if (selectedTask?.message_history) {
+        // Search for message containing "VERIFICATION PROMPT"
+        const promptMessage = selectedTask.message_history.find(
+          (msg: MessageHistoryItem) => msg.data.includes("VERIFICATION PROMPT")
+        );
+        
+        // If found, use it
+        if (promptMessage) {
+          verificationPrompt = promptMessage.data;
+        } 
+        // Fallback to message at index 4 if it exists
+        else if (selectedTask.message_history.length >= 5) {
+          verificationPrompt = selectedTask.message_history[4].data;
+        }
       }
     }
     
@@ -194,24 +206,42 @@ const ProposalsPage = () => {
 
   // Task action handlers
   const handleAcceptTask = async (taskId: string, message: string) => {
-    // TODO: Implement accept task API call
-    console.log('Accepting task:', taskId, message);
-    handleModalClose('accept');
-    await fetchTasks();
+    try {
+      // TODO: Implement accept task API call
+      console.log('Accepting task:', taskId, message);
+      handleModalClose('accept');
+      await fetchTasks();
+      
+      // Remove task from current list until refresh completes
+      setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
+    } catch (error) {
+      console.error('Error accepting task:', error);
+    }
   };
 
   const handleRequestTask = async (message: string) => {
-    // TODO: Implement request task API call
-    console.log('Requesting task:', message);
-    handleModalClose('request');
-    await fetchTasks();
+    try {
+      // TODO: Implement request task API call
+      console.log('Requesting task:', message);
+      handleModalClose('request');
+      await fetchTasks();
+    } catch (error) {
+      console.error('Error requesting task:', error);
+    }
   };
 
   const handleRefuseTask = async (taskId: string, reason: string) => {
-    // TODO: Implement refuse task API call
-    console.log('Refusing task:', taskId, reason);
-    handleModalClose('refuse');
-    await fetchTasks();
+    try {
+      // TODO: Implement refuse task API call
+      console.log('Refusing task:', taskId, reason);
+      handleModalClose('refuse');
+      
+      // Remove task from current list until refresh completes
+      setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
+      await fetchTasks();
+    } catch (error) {
+      console.error('Error refusing task:', error);
+    }
   };
 
   const handleSubmitVerification = async (taskId: string, details: string) => {
@@ -219,6 +249,9 @@ const ProposalsPage = () => {
       // The actual submission is now handled in the modal
       console.log('Verification submitted:', taskId, details);
       handleModalClose('verify');
+      
+      // Remove task from current list until refresh completes
+      setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
       await fetchTasks(); // Refresh the task list
     } catch (error) {
       console.error('Error handling verification submission:', error);
@@ -229,6 +262,9 @@ const ProposalsPage = () => {
     try {
       console.log('Final verification submitted:', taskId, details);
       handleModalClose('finalVerify');
+      
+      // Remove task from current list until refresh completes
+      setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
       await fetchTasks();
     } catch (error) {
       console.error('Error handling final verification:', error);

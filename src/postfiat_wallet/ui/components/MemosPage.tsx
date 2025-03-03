@@ -92,24 +92,21 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
 
   const [refreshTimeoutId, setRefreshTimeoutId] = useState<number | null>(null);
 
-  // Add this function to manage refreshes
-  const scheduleRefresh = (delayMs = 5000) => {
-    // Clear any existing timeout
-    if (refreshTimeoutId !== null) {
-      clearTimeout(refreshTimeoutId);
+  // Add a ref for the messages container
+  const messagesContainerRef = React.useRef<HTMLDivElement>(null);
+  
+  // Add an effect to initialize scroll position after messages load
+  useEffect(() => {
+    if (messagesDecrypted && messages.length > 0 && !isLoading && !initialFetching) {
+      // Set scroll to bottom when messages are first loaded
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }
     }
-    
-    // Set new timeout
-    const timeoutId = window.setTimeout(() => {
-      fetchMessages();
-      setRefreshTimeoutId(null);
-    }, delayMs);
-    
-    setRefreshTimeoutId(Number(timeoutId));
-  };
+  }, [messages, messagesDecrypted, isLoading, initialFetching]);
 
-  // Fetch messages from API with decryption
-  const fetchMessages = async (password?: string) => {
+  // Modify fetchMessages to include a forceRefresh parameter
+  const fetchMessages = async (password?: string, forceRefresh: boolean = false) => {
     if (!address) return;
     
     // Use auth context password if available and no specific password provided
@@ -127,7 +124,8 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       // Add artificial delay for better UX
       const [response] = await Promise.all([
         apiService.post<MessagesResponse>(`/odv/messages/${address}`, {
-          password: passwordToUse
+          password: passwordToUse,
+          refresh: forceRefresh // Add this parameter to request fresh data
         }),
         new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
       ]);
@@ -184,6 +182,35 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     }
   };
   
+  // Update scheduleRefresh to force refresh
+  const scheduleRefresh = (delayMs = 5000) => {
+    // Clear any existing timeout
+    if (refreshTimeoutId !== null) {
+      clearTimeout(refreshTimeoutId);
+    }
+    
+    // Set new timeout
+    const timeoutId = window.setTimeout(() => {
+      fetchMessages(undefined, true); // Pass true to force refresh from blockchain
+      setRefreshTimeoutId(null);
+    }, delayMs);
+    
+    setRefreshTimeoutId(Number(timeoutId));
+  };
+
+  // Update the periodic refresh to force a refresh from blockchain
+  useEffect(() => {
+    if (!address || !messagesDecrypted) return;
+    
+    // Set up periodic refresh
+    const intervalId = setInterval(() => {
+      fetchMessages(undefined, true); // Pass true to force refresh from blockchain
+    }, 30000); // 30 seconds
+    
+    // Clean up on unmount
+    return () => clearInterval(intervalId);
+  }, [address, messagesDecrypted]);
+
   // Handle password confirmation
   const handlePasswordConfirm = async (password: string) => {
     try {
@@ -458,19 +485,6 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       setShowDecryptModal(true);
     }
   }, [address]);
-  
-  // Set up periodic refresh only if messages are decrypted
-  useEffect(() => {
-    if (!address || !messagesDecrypted) return;
-    
-    // Set up periodic refresh
-    const intervalId = setInterval(() => {
-      fetchMessages();
-    }, 30000); // 30 seconds
-    
-    // Clean up on unmount
-    return () => clearInterval(intervalId);
-  }, [address, messagesDecrypted]);
 
   const handleInfoClick = (thread: Thread, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -573,8 +587,11 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
                 </div>
               )}
               
-              {/* Messages container */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Messages container - add ref here */}
+              <div 
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto p-4 space-y-4"
+              >
                 {/* Show loading state when initially fetching with stored password */}
                 {initialFetching || isLoading ? (
                   <div className="flex flex-col items-center justify-center h-full">

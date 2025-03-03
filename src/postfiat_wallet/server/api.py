@@ -27,6 +27,7 @@ import datetime
 from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
 
 REMEMBRANCER_PUBKEY = "ED5C677D5039D7412E2B978268F55C77937F9088C29028BEBFD0BCEA574DD7FF90"
+REMEMBRANCER_ADDRESS = "rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn"
 
 TASK_NODE_PUBKEY = "ED81962C730DDDA7AD72936142ABCCE0F2E3F7C562D6F38D8C50B74CB4EA0BE0A9"
 TASK_NODE_ADDRESS = "r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD"
@@ -148,11 +149,18 @@ class LoggingRequest(BaseModel):
 # Request model for decrypting ODV messages
 class DecryptMessagesRequest(BaseModel):
     password: str
+    refresh: bool = False  # Add this field to control whether to force refresh from blockchain
 
 class DecryptDocLinkRequest(BaseModel):
     account: str
     password: str
     encrypted_link: str
+
+class HandshakeRequest(BaseModel):
+    """Request model for sending handshake transactions"""
+    account: str
+    password: str
+    ecdh_public_key: str
 
 # Add this function outside of any endpoint
 def generate_custom_id():
@@ -810,6 +818,10 @@ async def decrypt_odv_messages(account: str, request: DecryptMessagesRequest):
         user_wallet = blockchain.create_wallet_from_seed(seed)
         logger.debug(f"Created wallet for {account}, will use for message decryption")
         
+        # Force refresh of blockchain data if requested in the request
+        if hasattr(request, 'refresh') and request.refresh:
+            await task_storage.initialize_user_tasks(account)
+        
         # Get messages using task storage with decryption support by passing the wallet
         messages = await task_storage.get_user_node_messages(
             user_account=account, 
@@ -986,6 +998,100 @@ async def decrypt_document_link(request: DecryptDocLinkRequest):
         
     except Exception as e:
         logger.error(f"Error decrypting document link: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/transaction/handshake_node")
+async def send_handshake_to_node(req: HandshakeRequest):
+    """
+    Send a handshake transaction to the node.
+    This establishes encrypted communication with the task node.
+    """
+    try:
+        # Get wallet info and decrypt the seed
+        wallet_info = storage.get_wallet(req.account)
+        
+        try:
+            seed = storage.decrypt_private_key(
+                wallet_info["encrypted_key"], 
+                req.password
+            )
+        except ValueError as e:
+            logger.error(f"Failed to decrypt key for account {req.account}")
+            raise HTTPException(
+                status_code=401, 
+                detail=f"Invalid password: {str(e)}"
+            )
+
+        # Derive ECDH public key from seed instead of using the one from request
+        ecdh_pub_key = blockchain.get_ecdh_public_key_from_seed(seed)
+
+        # Build the handshake transaction to the node
+        handshake_tx = transaction_builder.build_handshake_transaction(
+            account=req.account,
+            destination=TASK_NODE_ADDRESS,
+            ecdh_public_key=ecdh_pub_key
+        )
+        
+        # Sign and send the transaction
+        result = await blockchain.sign_and_send_transaction(handshake_tx, seed)
+        
+        return {
+            "status": "success",
+            "transaction": result
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid handshake request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error sending handshake to node: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/transaction/handshake_remembrancer")
+async def send_handshake_to_remembrancer(req: HandshakeRequest):
+    """
+    Send a handshake transaction to the remembrancer.
+    This establishes encrypted communication with the remembrancer node.
+    """
+    try:
+        # Get wallet info and decrypt the seed
+        wallet_info = storage.get_wallet(req.account)
+        
+        try:
+            seed = storage.decrypt_private_key(
+                wallet_info["encrypted_key"], 
+                req.password
+            )
+        except ValueError as e:
+            logger.error(f"Failed to decrypt key for account {req.account}")
+            raise HTTPException(
+                status_code=401, 
+                detail=f"Invalid password: {str(e)}"
+            )
+
+        # Derive ECDH public key from seed instead of using the one from request
+        ecdh_pub_key = blockchain.get_ecdh_public_key_from_seed(seed)
+
+        # Build the handshake transaction to the remembrancer
+        handshake_tx = transaction_builder.build_handshake_transaction(
+            account=req.account,
+            destination=REMEMBRANCER_ADDRESS,
+            ecdh_public_key=ecdh_pub_key
+        )
+        
+        # Sign and send the transaction
+        result = await blockchain.sign_and_send_transaction(handshake_tx, seed)
+        
+        return {
+            "status": "success",
+            "transaction": result
+        }
+        
+    except ValueError as e:
+        logger.error(f"Invalid handshake request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error sending handshake to remembrancer: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api
