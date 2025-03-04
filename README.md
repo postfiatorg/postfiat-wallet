@@ -15,6 +15,14 @@ When you run the wallet, the Python backend serves both the API endpoints and th
 - pip (Python package installer)
 
 ## Installation
+
+### From PyPI (recommended)
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install postfiat-wallet
+```
+
 ### From Source
 
 1. Ensure you have Python 3.12 or higher installed:
@@ -33,6 +41,7 @@ When you run the wallet, the Python backend serves both the API endpoints and th
    pip install -e .
    ```
 
+## Usage
 Start the wallet application with:
    ```bash
    postfiat-wallet start
@@ -40,19 +49,4 @@ Start the wallet application with:
 
 The wallet will start a local server that you can access through your web browser.
 
-### Dependencies
-
-The wallet depends on several Python packages including:
-- fastapi
-- uvicorn
-- boto3
-- dynaconf
-- websockets
-- click
-- xrpl-py
-- cryptography
-- requests
-- packaging
-- postfiat-sdk
-
-These will be automatically installed when you install the wallet package.
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://mozilla.org/MPL/2.0/)
