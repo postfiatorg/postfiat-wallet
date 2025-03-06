@@ -311,78 +311,6 @@ const SummaryPage = () => {
     });
   };
 
-  // Update the loading state render
-  if (loading || loadingStatus) {
-    return (
-      <div className="space-y-6 animate-fade-in">
-        {/* Skeleton for Balance Cards */}
-        <div className="grid grid-cols-2 gap-6">
-          {[1, 2].map((i) => (
-            <div key={i} className="bg-slate-900 border-slate-800 rounded-lg p-6 animate-pulse">
-              <div className="space-y-3">
-                <div className="h-4 w-24 bg-slate-700 rounded"></div>
-                <div className="h-8 w-32 bg-slate-700 rounded"></div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Skeleton for Account Details */}
-        <div className="bg-slate-900 border-slate-800 rounded-lg">
-          <div className="p-6 border-b border-slate-800">
-            <div className="h-6 w-40 bg-slate-700 rounded animate-pulse"></div>
-          </div>
-          <div className="p-6 space-y-4">
-            {[1, 2].map((i) => (
-              <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 animate-pulse">
-                <div className="space-y-2">
-                  <div className="h-4 w-24 bg-slate-700 rounded"></div>
-                  <div className="h-4 w-48 bg-slate-700 rounded"></div>
-                </div>
-                <div className="h-8 w-8 bg-slate-700 rounded"></div>
-              </div>
-            ))}
-            
-            {/* PostFiat Status Skeleton */}
-            <div className="border-t border-slate-800 pt-4 mt-4">
-              <div className="h-4 w-32 bg-slate-700 rounded mb-4 animate-pulse"></div>
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4 animate-pulse">
-                  <div className="space-y-2">
-                    <div className="h-4 w-32 bg-slate-700 rounded"></div>
-                    <div className="h-4 w-48 bg-slate-700 rounded"></div>
-                  </div>
-                  <div className="h-8 w-8 bg-slate-700 rounded"></div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Skeleton for Recent Activity */}
-        <div className="bg-slate-900 border-slate-800 rounded-lg">
-          <div className="p-6 border-b border-slate-800">
-            <div className="h-6 w-40 bg-slate-700 rounded animate-pulse"></div>
-          </div>
-          <div className="p-6 space-y-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="p-4 rounded-lg bg-slate-800/50 animate-pulse">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="h-4 w-32 bg-slate-700 rounded"></div>
-                    <div className="h-4 w-20 bg-slate-700 rounded"></div>
-                  </div>
-                  <div className="h-4 w-3/4 bg-slate-700 rounded"></div>
-                  <div className="h-4 w-24 bg-slate-700 rounded"></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Add this CSS at the top of your file or in your global styles
   const styles = `
     @keyframes fade-in {
@@ -395,180 +323,277 @@ const SummaryPage = () => {
     }
   `;
 
-  if (error) {
-    return <div className="text-red-500">Error: {error}</div>;
-  }
-
-  return (
-    <>
-      <style>{styles}</style>
-      <div className="space-y-6 animate-fade-in">
-        {/* Balance Cards */}
+  // Function to render balance cards section
+  const renderBalanceCards = () => {
+    if (loading) {
+      return (
         <div className="grid grid-cols-2 gap-6">
-          {balanceInfo.map((item) => (
-            <Card key={item.label} className="bg-slate-900 border-slate-800">
-              <CardContent className="p-6">
-                <div className="flex flex-col">
-                  <p className="text-sm font-medium text-slate-400">{item.label}</p>
-                  <p className="text-2xl font-semibold text-white mt-1">{item.value}</p>
-                </div>
-              </CardContent>
-            </Card>
+          {[1, 2].map((i) => (
+            <div key={i} className="bg-slate-900 border-slate-800 rounded-lg p-6 animate-pulse">
+              <div className="space-y-3">
+                <div className="h-4 w-24 bg-slate-700 rounded"></div>
+                <div className="h-8 w-32 bg-slate-700 rounded"></div>
+              </div>
+            </div>
           ))}
         </div>
+      );
+    }
 
-        {/* Account Details */}
+    if (error) {
+      return <div className="text-red-500">Failed to load balance: {error}</div>;
+    }
+
+    return (
+      <div className="grid grid-cols-2 gap-6 animate-fade-in">
+        {balanceInfo.map((item) => (
+          <Card key={item.label} className="bg-slate-900 border-slate-800">
+            <CardContent className="p-6">
+              <div className="flex flex-col">
+                <p className="text-sm font-medium text-slate-400">{item.label}</p>
+                <p className="text-2xl font-semibold text-white mt-1">{item.value}</p>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
+  // Function to render account details section
+  const renderAccountDetails = () => {
+    const skeletonPostFiatItems = [1, 2, 3, 4];
+
+    if (loadingStatus) {
+      return (
         <Card className="bg-slate-900 border-slate-800">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-white">Account Details</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {accountDetails.map((item) => (
-                <div key={item.label} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50">
-                  <div>
-                    <p className="text-sm font-medium text-slate-400">{item.label}</p>
-                    <p className="text-sm font-mono text-slate-200 mt-1">{item.value}</p>
+              {/* Account details skeleton */}
+              {[1, 2].map((i) => (
+                <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 animate-pulse">
+                  <div className="space-y-2">
+                    <div className="h-4 w-24 bg-slate-700 rounded"></div>
+                    <div className="h-4 w-48 bg-slate-700 rounded"></div>
                   </div>
-                  {item.copyable && (
-                    <button 
-                      onClick={() => copyToClipboard(item.value)}
-                      className="p-2 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                      title="Copy to clipboard"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                      </svg>
-                    </button>
-                  )}
+                  <div className="h-8 w-8 bg-slate-700 rounded"></div>
                 </div>
               ))}
               
-              {/* PostFiat Status Details */}
-              {postfiatDetails.length > 0 && (
-                <>
-                  <div className="border-t border-slate-800 pt-4 mt-4">
-                    <p className="text-sm font-medium text-slate-400 mb-4">Post Fiat Status</p>
-                    
-                    {postfiatDetails.map((item, index) => (
-                      <div key={index} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4">
-                        <div>
-                          <p className="text-sm font-medium text-slate-400">{item.label}</p>
-                          {item.link ? (
-                            <button
-                              onClick={() => openContextDoc(item.link!)}
-                              className="text-blue-400 hover:underline hover:text-blue-300 text-sm mt-1"
-                            >
-                              {item.value}
-                            </button>
-                          ) : (
-                            <p className={`text-sm mt-1 ${item.className || "text-slate-200"}`}>
-                              {item.value}
-                            </p>
-                          )}
-                        </div>
-                        {item.copyable && (
-                          <button 
-                            onClick={() => copyToClipboard(item.value)}
-                            className="p-2 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                            title="Copy to clipboard"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    ))}
+              {/* PostFiat Status Skeleton */}
+              <div className="border-t border-slate-800 pt-4 mt-4">
+                <div className="h-4 w-32 bg-slate-700 rounded mb-4 animate-pulse"></div>
+                {skeletonPostFiatItems.map((i) => (
+                  <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4 animate-pulse">
+                    <div className="space-y-2">
+                      <div className="h-4 w-32 bg-slate-700 rounded"></div>
+                      <div className="h-4 w-48 bg-slate-700 rounded"></div>
+                    </div>
+                    <div className="h-8 w-8 bg-slate-700 rounded"></div>
                   </div>
-                </>
-              )}
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
+      );
+    }
 
-        {/* Recent Activity */}
+    return (
+      <Card className="bg-slate-900 border-slate-800 animate-fade-in">
+        <CardHeader>
+          <CardTitle className="text-lg font-semibold text-white">Account Details</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {accountDetails.map((item) => (
+              <div key={item.label} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50">
+                <div>
+                  <p className="text-sm font-medium text-slate-400">{item.label}</p>
+                  <p className="text-sm font-mono text-slate-200 mt-1">{item.value}</p>
+                </div>
+                {item.copyable && (
+                  <button 
+                    onClick={() => copyToClipboard(item.value)}
+                    className="p-2 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            
+            {/* PostFiat Status Details */}
+            {postfiatDetails.length > 0 && (
+              <>
+                <div className="border-t border-slate-800 pt-4 mt-4">
+                  <p className="text-sm font-medium text-slate-400 mb-4">Post Fiat Status</p>
+                  
+                  {postfiatDetails.map((item, index) => (
+                    <div key={index} className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 mb-4">
+                      <div>
+                        <p className="text-sm font-medium text-slate-400">{item.label}</p>
+                        {item.link ? (
+                          <button
+                            onClick={() => openContextDoc(item.link!)}
+                            className="text-blue-400 hover:underline hover:text-blue-300 text-sm mt-1"
+                          >
+                            {item.value}
+                          </button>
+                        ) : (
+                          <p className={`text-sm mt-1 ${item.className || "text-slate-200"}`}>
+                            {item.value}
+                          </p>
+                        )}
+                      </div>
+                      {item.copyable && (
+                        <button 
+                          onClick={() => copyToClipboard(item.value)}
+                          className="p-2 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                          title="Copy to clipboard"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  // Function to render recent activity section
+  const renderRecentActivity = () => {
+    if (loadingTasks) {
+      return (
         <Card className="bg-slate-900 border-slate-800">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-white">Recent Activity</CardTitle>
           </CardHeader>
-          <CardContent className="max-h-[400px] overflow-y-auto">
-            {loadingTasks ? (
-              <div className="text-white">Loading tasks...</div>
-            ) : tasksError ? (
-              <div className="text-red-500">Error: {tasksError}</div>
-            ) : tasks.length === 0 ? (
-              <div className="text-slate-500">No recent activity</div>
-            ) : (
-              <div className="space-y-4">
-                {tasks.map((task) => {
-                  const tsStr = task.id.split('__')[0];
-                  const displayTs = tsStr.replace('_', ' ');
-                  return (
-                    <div key={task.id} className="p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
-                      <div 
-                        className="cursor-pointer" 
-                        onClick={() => toggleTaskExpansion(task.id)}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-medium text-slate-400">
-                              {task.message_history && task.message_history.length > 0
-                                ? task.message_history[0].direction.charAt(0).toUpperCase() + task.message_history[0].direction.slice(1)
-                                : "Unknown"}
-                            </span>
-                            <span className="text-xs font-mono text-slate-500">{task.id}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-700 text-slate-300">
-                              {task.status}
-                            </span>
-                            <svg 
-                              className={`w-4 h-4 text-slate-400 transition-transform ${expandedTasks.has(task.id) ? 'transform rotate-180' : ''}`} 
-                              fill="none" 
-                              stroke="currentColor" 
-                              viewBox="0 0 24 24"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                        </div>
-                        <p className="text-sm text-slate-300 mb-2">
-                          {task.message_history && task.message_history.length > 0
-                            ? task.message_history[0].data
-                            : "No message available"}
-                        </p>
-                        <p className="text-xs text-slate-500">{displayTs}</p>
-                      </div>
-                      
-                      {/* Message History Expansion */}
-                      {expandedTasks.has(task.id) && task.message_history && (
-                        <div className="mt-4 pt-4 border-t border-slate-700">
-                          <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
-                          <div className="space-y-3">
-                            {/* Filter out duplicate messages by creating a unique key from direction + data */}
-                            {Array.from(new Map(
-                              task.message_history.map((msg: MessageHistoryItem) => 
-                                [`${msg.direction}:${msg.data}`, msg]
-                              )
-                            ).values()).map((msg, idx) => (
-                              <div key={idx} className="text-sm">
-                                <span className="text-slate-400 font-medium">
-                                  {(msg as MessageHistoryItem).direction.charAt(0).toUpperCase() + (msg as MessageHistoryItem).direction.slice(1)}:
-                                </span>
-                                <p className="text-slate-300 mt-1 pl-4">{(msg as MessageHistoryItem).data}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+          <CardContent>
+            {/* Skeleton for Recent Activity */}
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="p-4 rounded-lg bg-slate-800/50 animate-pulse">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="h-4 w-32 bg-slate-700 rounded"></div>
+                      <div className="h-4 w-20 bg-slate-700 rounded"></div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <div className="h-4 w-3/4 bg-slate-700 rounded"></div>
+                    <div className="h-4 w-24 bg-slate-700 rounded"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
+      );
+    }
+
+    return (
+      <Card className="bg-slate-900 border-slate-800 animate-fade-in">
+        <CardHeader>
+          <CardTitle className="text-lg font-semibold text-white">Recent Activity</CardTitle>
+        </CardHeader>
+        <CardContent className="max-h-[400px] overflow-y-auto">
+          {tasksError ? (
+            <div className="text-red-500">Error: {tasksError}</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-slate-500">No recent activity</div>
+          ) : (
+            <div className="space-y-4">
+              {tasks.map((task) => {
+                const tsStr = task.id.split('__')[0];
+                const displayTs = tsStr.replace('_', ' ');
+                return (
+                  <div key={task.id} className="p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
+                    <div 
+                      className="cursor-pointer" 
+                      onClick={() => toggleTaskExpansion(task.id)}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-medium text-slate-400">
+                            {task.message_history && task.message_history.length > 0
+                              ? task.message_history[0].direction.charAt(0).toUpperCase() + task.message_history[0].direction.slice(1)
+                              : "Unknown"}
+                          </span>
+                          <span className="text-xs font-mono text-slate-500">{task.id}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-700 text-slate-300">
+                            {task.status}
+                          </span>
+                          <svg 
+                            className={`w-4 h-4 text-slate-400 transition-transform ${expandedTasks.has(task.id) ? 'transform rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-300 mb-2">
+                        {task.message_history && task.message_history.length > 0
+                          ? task.message_history[0].data
+                          : "No message available"}
+                      </p>
+                      <p className="text-xs text-slate-500">{displayTs}</p>
+                    </div>
+                    
+                    {/* Message History Expansion */}
+                    {expandedTasks.has(task.id) && task.message_history && (
+                      <div className="mt-4 pt-4 border-t border-slate-700">
+                        <h4 className="text-sm font-medium text-slate-400 mb-2">Message History</h4>
+                        <div className="space-y-3">
+                          {/* Filter out duplicate messages by creating a unique key from direction + data */}
+                          {Array.from(new Map(
+                            task.message_history.map((msg: MessageHistoryItem) => 
+                              [`${msg.direction}:${msg.data}`, msg]
+                            )
+                          ).values()).map((msg, idx) => (
+                            <div key={idx} className="text-sm">
+                              <span className="text-slate-400 font-medium">
+                                {(msg as MessageHistoryItem).direction.charAt(0).toUpperCase() + (msg as MessageHistoryItem).direction.slice(1)}:
+                              </span>
+                              <p className="text-slate-300 mt-1 pl-4">{(msg as MessageHistoryItem).data}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
+  // Modify the return statement to always render all sections regardless of loading states
+  return (
+    <>
+      <style>{styles}</style>
+      <div className="space-y-6">
+        {renderBalanceCards()}
+        {renderAccountDetails()}
+        {renderRecentActivity()}
       </div>
 
       {/* Password confirmation modal */}

@@ -14,6 +14,8 @@ import Onboarding from '@/components/Onboarding';
 import MemosPage from '@/components/MemosPage';
 import SettingsPage from '@/components/SettingsPage';
 import { apiService } from '@/services/apiService';
+import { ServerUnavailableModal } from '@/components/modals/ServerUnavailableModal';
+import { connectionManager, CONNECTION_STATUS_CHANGED } from '@/services/connectionManager';
 
 // Define response interfaces for better type safety
 interface StatusResponse {
@@ -31,7 +33,37 @@ export default function Home() {
   });
   const [initStatus, setInitStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isServerAvailable, setIsServerAvailable] = useState(true);
 
+  // Setup connection monitoring
+  useEffect(() => {
+    // Start the connection manager
+    connectionManager.startMonitoring();
+    
+    // Set up event listener for connection status changes
+    const handleConnectionStatusChange = (event: CustomEvent) => {
+      setIsServerAvailable(event.detail.isConnected);
+    };
+
+    // Add event listener
+    window.addEventListener(
+      CONNECTION_STATUS_CHANGED, 
+      handleConnectionStatusChange as EventListener
+    );
+    
+    // Perform initial check
+    connectionManager.manualCheck();
+    
+    // Cleanup function
+    return () => {
+      connectionManager.stopMonitoring();
+      window.removeEventListener(
+        CONNECTION_STATUS_CHANGED, 
+        handleConnectionStatusChange as EventListener
+      );
+    };
+  }, []);
+  
   useEffect(() => {
     // Check if we have a stored wallet address
     const storedAddress = localStorage.getItem('wallet_address');
@@ -70,7 +102,7 @@ export default function Home() {
       }
     };
 
-    if (auth.isAuthenticated) {
+    if (auth.isAuthenticated && isServerAvailable) {
       checkInitStatus();
       
       // Set up periodic checking without the balance checks
@@ -82,7 +114,7 @@ export default function Home() {
     } else {
       setIsLoading(false);
     }
-  }, [auth.isAuthenticated, auth.address]);
+  }, [auth.isAuthenticated, auth.address, isServerAvailable]);
 
   const handleAuth = (address: string, username: string, password: string) => {
     setAuth({
@@ -100,7 +132,7 @@ export default function Home() {
     console.log("Signing out and resetting all state...");
     
     // Call the server to clear state for this account
-    if (auth.address) {
+    if (auth.address && isServerAvailable) {
       try {
         await apiService.post(`/tasks/clear-state/${auth.address}`);
         console.log("Server state cleared for account:", auth.address);
@@ -136,6 +168,21 @@ export default function Home() {
   const handlePageChange = (page: string) => {
     setActivePage(page);
   };
+
+  // Handle retry connection
+  const handleRetryConnection = () => {
+    connectionManager.manualCheck();
+  };
+
+  // Show the server unavailable modal if server is unavailable
+  // This takes precedence over everything else
+  if (!isServerAvailable) {
+    return (
+      <div className="min-h-screen bg-slate-950">
+        <ServerUnavailableModal isOpen={true} onRetry={handleRetryConnection} />
+      </div>
+    );
+  }
 
   if (!auth.isAuthenticated) {
     return <AuthPage onAuth={handleAuth} />;

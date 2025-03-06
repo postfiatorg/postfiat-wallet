@@ -30,7 +30,7 @@ const FinalVerificationModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const { address, username, password } = useContext(AuthContext);
+  const { address, username, password, setPassword } = useContext(AuthContext);
 
   useEffect(() => {
     setDetails(initialDetails);
@@ -159,9 +159,10 @@ const FinalVerificationModal = ({
       <PasswordConfirmModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
-        onConfirm={async (password) => {
+        onConfirm={async (enteredPassword) => {
           setShowPasswordModal(false);
-          await submitVerificationResponse(password);
+          setPassword(enteredPassword);
+          await submitVerificationResponse(enteredPassword);
         }}
         error={error}
       />

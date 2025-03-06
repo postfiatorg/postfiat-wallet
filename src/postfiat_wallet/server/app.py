@@ -9,9 +9,15 @@ from postfiat_wallet.services.storage import init_storage
 def create_app():
     app = FastAPI(title="Post Fiat Wallet API")
     
+    # Configure CORS for development
+    origins = [
+        "http://localhost:8000",  # Development server
+        "http://127.0.0.1:8000",
+    ]
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # In production, restrict this to your frontend domains
+        allow_origins=origins if os.getenv("POSTFIAT_DEV") else ["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

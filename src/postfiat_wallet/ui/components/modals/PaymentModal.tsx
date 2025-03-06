@@ -30,7 +30,7 @@ export function PaymentModal({
   initialMemoId,
   initialMemo
 }: PaymentModalProps) {
-  const { address } = useContext(AuthContext);
+  const { address, password, setPassword } = useContext(AuthContext);
   const [amount, setAmount] = useState(initialAmount);
   const [toAddress, setToAddress] = useState(initialToAddress);
   const [currency, setCurrency] = useState(initialCurrency);
@@ -56,7 +56,13 @@ export function PaymentModal({
       setError('Amount and destination address are required');
       return;
     }
-    setShowPasswordModal(true);
+    
+    // Use password from context if available
+    if (password) {
+      await submitPayment(password);
+    } else {
+      setShowPasswordModal(true);
+    }
   };
 
   const submitPayment = async (password: string) => {
@@ -183,9 +189,11 @@ export function PaymentModal({
       <PasswordConfirmModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
-        onConfirm={async (password) => {
+        onConfirm={async (enteredPassword) => {
           setShowPasswordModal(false);
-          await submitPayment(password);
+          // Save the password in the context for future use
+          setPassword(enteredPassword);
+          await submitPayment(enteredPassword);
         }}
         error={error}
       />
