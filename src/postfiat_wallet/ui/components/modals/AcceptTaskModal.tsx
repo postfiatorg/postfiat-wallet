@@ -22,7 +22,7 @@ const AcceptTaskModal = ({ isOpen, onClose, taskId, onAccept, initialMessage }: 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const { address, username, password } = useContext(AuthContext);
+  const { address, username, password, setPassword } = useContext(AuthContext);
 
   useEffect(() => {
     setMessage(initialMessage);
@@ -140,9 +140,10 @@ const AcceptTaskModal = ({ isOpen, onClose, taskId, onAccept, initialMessage }: 
       <PasswordConfirmModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
-        onConfirm={async (password) => {
+        onConfirm={async (enteredPassword) => {
           setShowPasswordModal(false);
-          await submitAcceptance(password);
+          setPassword(enteredPassword);
+          await submitAcceptance(enteredPassword);
         }}
         error={error}
       />

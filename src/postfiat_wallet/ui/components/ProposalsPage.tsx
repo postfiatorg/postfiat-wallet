@@ -164,8 +164,11 @@ const ProposalsPage = () => {
   };
 
   // Modal handlers
-  const handleModalOpen = (modalType: keyof typeof modalState) => {
-    if (modalType !== 'request' && modalType !== 'logPomodoro' && (!selectedTaskId || !tasks.some(task => task.id === selectedTaskId))) {
+  const handleModalOpen = (modalType: keyof typeof modalState, taskId?: string) => {
+    // Use provided taskId or fall back to the state variable
+    const targetTaskId = taskId || selectedTaskId;
+    
+    if (modalType !== 'request' && modalType !== 'logPomodoro' && (!targetTaskId || !tasks.some(task => task.id === targetTaskId))) {
       setModalError('Please select a valid task first');
       return;
     }
@@ -174,7 +177,7 @@ const ProposalsPage = () => {
     // Get verification prompt for the selected task if opening verification modal
     let verificationPrompt = '';
     if (modalType === 'verify' || modalType === 'finalVerify') {
-      const selectedTask = tasks.find(task => task.id === selectedTaskId);
+      const selectedTask = tasks.find(task => task.id === targetTaskId);
       if (selectedTask?.message_history) {
         // Search for message containing "VERIFICATION PROMPT"
         const promptMessage = selectedTask.message_history.find(
@@ -197,6 +200,11 @@ const ProposalsPage = () => {
       [modalType]: true,
       verificationPrompt: verificationPrompt
     });
+    
+    // Also update the selectedTaskId state to keep it in sync
+    if (taskId) {
+      setSelectedTaskId(taskId);
+    }
   };
 
   const handleModalClose = (modalType: keyof typeof modalState) => {
@@ -341,8 +349,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('accept');
+                handleModalOpen('accept', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
                         text-white rounded-lg transition-colors"
@@ -352,8 +359,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('refuse');
+                handleModalOpen('refuse', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
                         text-white rounded-lg transition-colors"
@@ -368,8 +374,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('verify');
+                handleModalOpen('verify', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
                         text-white rounded-lg transition-colors"
@@ -379,8 +384,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('refuse');
+                handleModalOpen('refuse', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
                         text-white rounded-lg transition-colors"
@@ -395,8 +399,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('finalVerify');
+                handleModalOpen('finalVerify', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 
                         text-white rounded-lg transition-colors"
@@ -406,8 +409,7 @@ const ProposalsPage = () => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                setSelectedTaskId(task.id);
-                handleModalOpen('refuse');
+                handleModalOpen('refuse', task.id);
               }}
               className="px-3 py-1 text-xs font-medium bg-slate-700 hover:bg-slate-600 
                         text-white rounded-lg transition-colors"

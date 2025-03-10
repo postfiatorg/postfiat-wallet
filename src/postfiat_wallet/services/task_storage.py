@@ -45,7 +45,7 @@ class TaskStorage:
 
         # Create the client that fetches & caches XRPL transactions
         self.client = CachingRpcClient(
-            endpoint="https://s2.ripple.com:51234",
+            endpoint="https://xrpl.postfiat.org:6007",
             cache_dir=str(cache_dir)
         )
 

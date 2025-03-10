@@ -14,7 +14,7 @@ interface WalletResponse {
 }
 
 export default function AuthPage({ onAuth }: { onAuth: (address: string, username: string, password: string) => void }) {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'generate'>('signin');
+  const [mode, setMode] = useState<'signin' | 'create' | 'import'>('signin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -29,15 +29,16 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
     setError('');
     setLoading(true);
 
-    if (mode === 'signup' && password !== confirmPassword) {
+    if ((mode === 'create' || mode === 'import') && password !== confirmPassword) {
       setError('Passwords do not match');
+      setLoading(false);
       return;
     }
 
     let endpoint = '';
     if (mode === 'signin') {
       endpoint = `/auth/signin`;
-    } else if (mode === 'generate') {
+    } else if (mode === 'create' || mode === 'import') {
       endpoint = `/auth/create`;
     } else {
       setError('Invalid mode for submission.');
@@ -49,10 +50,10 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
       const data = await apiService.post<AuthResponse>(endpoint, {
         username,
         password,
-        ...(mode === 'generate' && { 
+        ...(mode === 'create' || mode === 'import' ? { 
           private_key: privateKey,
           address: address 
-        })
+        } : {})
       });
 
       console.log("Auth data:", data);
@@ -66,7 +67,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
         throw err;
       }
       
-      if (mode === 'generate') {
+      if (mode === 'create' || mode === 'import') {
         // Clear state for the new account
         try {
           await apiService.post(`/tasks/clear-state/${data.address}`);
@@ -75,13 +76,8 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
           console.error("Error clearing server state:", error);
         }
         
-        // Clear form and switch to signin mode after successful account creation
-        setUsername('');
-        setPassword('');
-        setPrivateKey('');
-        setAddress('');
-        setMode('signin');
-        setError('Account created successfully! Please sign in.');
+        // Automatically sign in the user instead of making them sign in manually
+        onAuth(data.address, username, password);
       } else {
         // Normal signin flow - pass both address and username
         onAuth(data.address, username, password);
@@ -109,11 +105,20 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
     }
   };
 
-  if (mode === 'generate') {
+  // Render wallet creation form
+  if (mode === 'create') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="bg-slate-900 p-8 rounded-lg border border-slate-800 w-full max-w-md">
           <h1 className="text-2xl font-bold text-white mb-6">Create New Wallet</h1>
+          
+          <button
+            type="button"
+            onClick={handleGenerateWallet}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg mb-4"
+          >
+            Generate New XRP Wallet
+          </button>
           
           {privateKey && (
             <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg">
@@ -132,6 +137,134 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
           )}
           
           <form onSubmit={handleSubmit} className="space-y-4">
+            {address && (
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  XRP Address
+                </label>
+                <input
+                  type="text"
+                  value={address}
+                  readOnly
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                />
+              </div>
+            )}
+
+            {privateKey && (
+              <div>
+                <div className="flex justify-between items-center">
+                  <label className="block text-sm font-medium text-slate-300 mb-1">
+                    XRP Secret
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret(!showSecret)}
+                    className="text-xs text-slate-400 hover:text-slate-300"
+                  >
+                    {showSecret ? 'Hide Secret' : 'Show Secret'}
+                  </button>
+                </div>
+                <input
+                  type={showSecret ? "text" : "password"}
+                  value={privateKey}
+                  readOnly
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                Username
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                required
+                minLength={8}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                Confirm Password
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                required
+                minLength={8}
+              />
+            </div>
+
+            {error && (
+              <div className="text-red-500 text-sm">{error}</div>
+            )}
+
+            <button
+              type="submit"
+              disabled={!privateKey || !address}
+              className={`w-full ${!privateKey || !address ? 'bg-blue-600/50' : 'bg-blue-600 hover:bg-blue-700'} text-white font-medium py-2 px-4 rounded-lg`}
+            >
+              Create Account
+            </button>
+          </form>
+
+          <div className="mt-4 text-center space-y-2">
+            <button
+              onClick={() => {
+                setMode('import');
+                setPrivateKey('');
+                setAddress('');
+              }}
+              className="text-blue-400 hover:text-blue-300 text-sm"
+            >
+              Import Existing Wallet
+            </button>
+            <div>
+              <button
+                onClick={() => {
+                  setMode('signin');
+                  setPrivateKey('');
+                  setAddress('');
+                }}
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  // Render wallet import form
+  if (mode === 'import') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="bg-slate-900 p-8 rounded-lg border border-slate-800 w-full max-w-md">
+          <h1 className="text-2xl font-bold text-white mb-6">Import Existing Wallet</h1>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1">
                 XRP Address
@@ -141,6 +274,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                required
               />
             </div>
 
@@ -162,6 +296,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
                 value={privateKey}
                 onChange={(e) => setPrivateKey(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white"
+                required
               />
             </div>
 
@@ -210,31 +345,37 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
               <div className="text-red-500 text-sm">{error}</div>
             )}
 
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleGenerateWallet}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
-              >
-                Generate New XRP Wallet
-              </button>
-
-              <button
-                type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
-              >
-                Create Account
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
+            >
+              Import Wallet
+            </button>
           </form>
 
-          <div className="mt-4 text-center">
+          <div className="mt-4 text-center space-y-2">
             <button
-              onClick={() => setMode('signin')}
+              onClick={() => {
+                setMode('create');
+                setPrivateKey('');
+                setAddress('');
+              }}
               className="text-blue-400 hover:text-blue-300 text-sm"
             >
-              Back to Sign In
+              Create New Wallet Instead
             </button>
+            <div>
+              <button
+                onClick={() => {
+                  setMode('signin');
+                  setPrivateKey('');
+                  setAddress('');
+                }}
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                Back to Sign In
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -245,7 +386,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
     <div className="min-h-screen flex items-center justify-center bg-slate-950">
       <div className="bg-slate-900 p-8 rounded-lg border border-slate-800 w-full max-w-md">
         <h1 className="text-2xl font-bold text-white mb-6">
-          {mode === 'signin' ? 'Sign In' : 'Create New Wallet'}
+          Sign In
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -284,21 +425,32 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
             type="submit"
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
           >
-            {mode === 'signin' ? 'Sign In' : 'Create Wallet'}
+            Sign In
           </button>
         </form>
 
-        <div className="mt-4 text-center space-y-2">
-          {mode === 'signin' && (
-            <div>
-              <button
-                onClick={() => setMode('generate')}
-                className="text-blue-400 hover:text-blue-300 text-sm"
-              >
-                Create a new Account
-              </button>
-            </div>
-          )}
+        <div className="mt-6 grid grid-cols-1 gap-3">
+          <p className="text-center text-slate-400 text-sm">Don't have a wallet?</p>
+          <button
+            onClick={() => {
+              setMode('create');
+              setPrivateKey('');
+              setAddress('');
+            }}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg border border-slate-700"
+          >
+            Create New Wallet
+          </button>
+          <button
+            onClick={() => {
+              setMode('import');
+              setPrivateKey('');
+              setAddress('');
+            }}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg border border-slate-700"
+          >
+            Import Existing Wallet
+          </button>
         </div>
       </div>
     </div>

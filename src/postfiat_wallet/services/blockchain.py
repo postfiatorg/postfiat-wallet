@@ -22,7 +22,7 @@ from postfiat.rpc import RpcSender
 logger = logging.getLogger(__name__)
 
 class BlockchainService:
-    def __init__(self, node_url: str = "https://s2.ripple.com:51234"):
+    def __init__(self, node_url: str = "https://xrpl.postfiat.org:6007"):
         """Initialize blockchain service with XRPL async client"""
         self.client = AsyncJsonRpcClient(node_url)
         self.pft_currency = "PFT"

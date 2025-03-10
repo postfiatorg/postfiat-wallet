@@ -22,7 +22,7 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const { address, username, password } = useContext(AuthContext);
+  const { address, username, password, setPassword } = useContext(AuthContext);
 
   useEffect(() => {
     setReason(initialReason);
@@ -140,9 +140,10 @@ const RefuseTaskModal = ({ isOpen, onClose, taskId, onRefuse, initialReason }: R
       <PasswordConfirmModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
-        onConfirm={async (password) => {
+        onConfirm={async (enteredPassword) => {
           setShowPasswordModal(false);
-          await submitRefusal(password);
+          setPassword(enteredPassword);
+          await submitRefusal(enteredPassword);
         }}
         error={error}
       />

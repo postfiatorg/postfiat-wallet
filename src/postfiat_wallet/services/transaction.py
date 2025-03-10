@@ -23,7 +23,7 @@ class TransactionBuilder:
     
     def __init__(self):
         self.node_address = 'r4yc85M1hwsegVGZ1pawpZPwj65SVs8PzD'  # Post Fiat Node address
-        self.client_url = "https://s1.ripple.com:51234/"
+        self.client_url = "https://xrpl.postfiat.org:6007"
         self.pft_issuer = 'rnQUEEg8yyjrwk9FhyXpKavHyCRJM9BDMW'  # PFT token issuer
     
     def _to_hex(self, string: str) -> str:
