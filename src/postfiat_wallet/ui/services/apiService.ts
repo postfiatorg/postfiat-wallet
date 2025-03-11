@@ -3,17 +3,30 @@
  */
 import { connectionManager } from './connectionManager';
 
+// Define which API endpoints should be allowed before authentication
+const PUBLIC_ENDPOINTS = [
+  '/auth/signin',
+  '/auth/create',
+  '/wallet/generate',
+  '/wallet/address'
+];
+
 export class ApiService {
   private static instance: ApiService;
   
   // Base path for all API endpoints
   private readonly basePath: string;
   
+  // Track if app is authenticated
+  private isAuthenticated: boolean = false;
+  
   private constructor() {
     // In development mode, use the absolute URL to the API server
     this.basePath = process.env.NODE_ENV === 'development' 
       ? 'http://localhost:28080/api'  // Adjust port if needed
       : '/api';
+    
+    console.log('API Service initialized');
   }
   
   public static getInstance(): ApiService {
@@ -24,9 +37,42 @@ export class ApiService {
   }
   
   /**
+   * Set authentication state
+   */
+  public setAuthenticated(value: boolean): void {
+    this.isAuthenticated = value;
+    console.log(`API Service: Authentication state set to ${value}`);
+  }
+  
+  /**
+   * Check if endpoint should be allowed without authentication
+   */
+  private isPublicEndpoint(endpoint: string): boolean {
+    const publicEndpoints = [
+      '/auth/signin',
+      '/auth/create',
+      '/wallet/generate',
+      '/health'
+    ];
+    
+    // Check if the endpoint is in our allowed list
+    return publicEndpoints.some(publicEndpoint => 
+      endpoint === publicEndpoint || endpoint.startsWith(publicEndpoint)
+    );
+  }
+  
+  /**
    * GET request to the API
    */
   public async get<T>(endpoint: string): Promise<T> {
+    console.log(`[API Request] GET ${endpoint}`);
+    
+    // Check if this request should be blocked
+    if (!this.isAuthenticated && !this.isPublicEndpoint(endpoint)) {
+      console.warn(`Blocked unauthenticated GET request to ${endpoint}`);
+      throw new Error(`Authentication required for ${endpoint}`);
+    }
+    
     try {
       const response = await fetch(`${this.basePath}${endpoint}`, {
         credentials: 'include' // Include cookies in the request
@@ -52,6 +98,14 @@ export class ApiService {
    * POST request to the API
    */
   public async post<T>(endpoint: string, data?: any): Promise<T> {
+    console.log(`[API Request] POST ${endpoint}`, data ? '(with data)' : '');
+    
+    // Check if this request should be blocked
+    if (!this.isAuthenticated && !this.isPublicEndpoint(endpoint)) {
+      console.warn(`Blocked unauthenticated POST request to ${endpoint}`);
+      throw new Error(`Authentication required for ${endpoint}`);
+    }
+    
     try {
       const response = await fetch(`${this.basePath}${endpoint}`, {
         method: 'POST',

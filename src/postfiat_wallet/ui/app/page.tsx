@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import SummaryPage from '@/components/SummaryPage';
 import ProposalsPage from '@/components/ProposalsPage';
-import VerificationPage from '@/components/VerificationPage';
 import RewardsPage from '@/components/RewardsPage';
 import PaymentsPage from '@/components/PaymentsPage';
 import AuthPage from '@/components/AuthPage';
@@ -35,10 +34,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
 
-  // Setup connection monitoring
+  // Setup connection monitoring with basic check only
   useEffect(() => {
-    // Start the connection manager
-    connectionManager.startMonitoring();
+    // Start the connection manager in basic mode (no authenticated endpoints)
+    connectionManager.startMonitoring(false);
     
     // Set up event listener for connection status changes
     const handleConnectionStatusChange = (event: CustomEvent) => {
@@ -64,18 +63,28 @@ export default function Home() {
     };
   }, []);
   
+  // Update connection monitoring when auth changes
   useEffect(() => {
-    // Check if we have a stored wallet address
-    const storedAddress = localStorage.getItem('wallet_address');
-    const storedUsername = localStorage.getItem('username');
-    if (storedAddress && storedUsername) {
-      setAuth({
-        isAuthenticated: true,
-        address: storedAddress,
-        username: storedUsername,
-        password: null
-      });
+    // When auth state changes, update connection monitoring mode
+    connectionManager.stopMonitoring();
+    connectionManager.startMonitoring(auth.isAuthenticated);
+    
+    // Perform immediate check with new mode
+    connectionManager.manualCheck();
+  }, [auth.isAuthenticated]);
+
+  useEffect(() => {
+    // Comment out or remove this auto-login code
+    /*
+    const savedAddress = localStorage.getItem('wallet_address');
+    const savedUsername = localStorage.getItem('username');
+    const autoAuth = localStorage.getItem('auto_auth') === 'true';
+    
+    if (savedAddress && savedUsername && autoAuth) {
+      // Don't auto-login
+      // checkAccountStatus(savedAddress);
     }
+    */
   }, []);
 
   useEffect(() => {
@@ -117,27 +126,45 @@ export default function Home() {
   }, [auth.isAuthenticated, auth.address, isServerAvailable]);
 
   const handleAuth = (address: string, username: string, password: string) => {
+    // Update auth state
     setAuth({
       isAuthenticated: true,
       address,
       username,
       password
     });
-    localStorage.setItem('wallet_address', address);
-    localStorage.setItem('username', username);
-    // Note: We intentionally don't store password in localStorage for security
+    
+    // Set API service as authenticated
+    apiService.setAuthenticated(true);
+    
+    // Don't store in localStorage anymore
+    // localStorage.setItem('wallet_address', address);
+    // localStorage.setItem('username', username);
+    // localStorage.setItem('auto_auth', 'true');
   };
 
   const handleSignOut = async () => {
     console.log("Signing out and resetting all state...");
     
-    // Call the server to clear state for this account
+    // Don't try to clear state if there's no connection
     if (auth.address && isServerAvailable) {
       try {
+        // First stop task refresh for this account to prevent race conditions
+        await apiService.post(`/tasks/stop-refresh/${auth.address}`);
+        console.log("Stopped refresh loop for account:", auth.address);
+        
+        // Add a small delay to ensure refresh has fully stopped
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Then clear the server state for this account
         await apiService.post(`/tasks/clear-state/${auth.address}`);
         console.log("Server state cleared for account:", auth.address);
+        
+        // Force a server-side cache reset for all endpoints
+        await apiService.post(`/cache/clear/${auth.address}`);
+        console.log("Cache cleared for account:", auth.address);
       } catch (error) {
-        console.error("Error clearing server state:", error);
+        console.error("Error during sign out cleanup:", error);
       }
     }
     
@@ -159,10 +186,12 @@ export default function Home() {
     localStorage.removeItem('wallet_address');
     localStorage.removeItem('username');
     
-    // Force a re-render by adding a small delay
-    setTimeout(() => {
-      console.log("Sign out complete, state reset");
-    }, 100);
+    // Set API service as not authenticated
+    apiService.setAuthenticated(false);
+    
+    // Force a page reload to completely reset React application state
+    // This is the most reliable way to ensure all component state is reset
+    window.location.reload();
   };
 
   const handlePageChange = (page: string) => {
@@ -217,8 +246,6 @@ export default function Home() {
     switch (activePage) {
       case 'proposals':
         return <ProposalsPage />;
-      case 'verification':
-        return <VerificationPage />;
       case 'rewards':
         return <RewardsPage />;
       case 'payments':

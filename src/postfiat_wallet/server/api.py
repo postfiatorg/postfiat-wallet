@@ -7,7 +7,7 @@ from postfiat_wallet.services import storage
 import logging
 from postfiat_wallet.services.task_storage import TaskStorage
 from enum import Enum
-from postfiat.nodes.task.state import TaskStatus
+from postfiat.nodes.task.state import TaskStatus, UserState
 from typing import Optional, Dict, Any
 from postfiat_wallet.services.transaction import TransactionBuilder
 from xrpl.models.transactions import TrustSet
@@ -22,6 +22,8 @@ from decimal import Decimal
 import random
 import string
 import datetime
+import time
+from postfiat.nodes.task.state import UserState
 
 # Import SDK constants and models
 from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
@@ -286,6 +288,11 @@ async def initialize_tasks(account: str):
     """
     logger.info(f"Received initialize tasks request for account: {account}")
     try:
+        # First make sure any previous data for this account is fully cleared
+        logger.info(f"Pre-emptively clearing state for account before initialization: {account}")
+        task_storage.clear_user_state(account)
+        
+        # Now initialize fresh data
         await task_storage.initialize_user_tasks(account)
         logger.info(f"Successfully initialized tasks for account: {account}")
         return {"status": "success"}
@@ -324,22 +331,27 @@ async def stop_task_refresh(account: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tasks/{account}")
-async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
+async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None, since: Optional[int] = None):
     """
     Get all tasks for an account, optionally filtered by status.
+    If 'since' timestamp is provided, only return tasks that have been updated since that time.
     """
-    logger.debug(f"Received tasks request for account: {account}, status filter: {status}")
+    logger.debug(f"Received tasks request for account: {account}, status filter: {status}, since: {since}")
     try:
         # First ensure tasks are initialized
-        if not task_storage._state.node_account:
+        if not task_storage._state.node_account or not task_storage.is_initialized(account):
             logger.debug(f"Account {account} not initialized, initializing now...")
-            await task_storage.initialize_user_tasks(account)
+            # Use partial initialization if 'since' is recent
+            if since and time.time() - since < 3600:  # If asking for updates in the last hour
+                await task_storage.initialize_recent_tasks(account, since)
+            else:
+                await task_storage.initialize_user_tasks(account)
         
         # Convert API enum to internal enum if status is provided
         internal_status = TaskStatus[status.name] if status else None
         
         if status:
-            tasks = await task_storage.get_tasks_by_state(account, internal_status)
+            tasks = await task_storage.get_tasks_by_state(account, internal_status, since)
             
             # Log task structure for the first task to help debug
             if tasks and len(tasks) > 0:
@@ -353,11 +365,12 @@ async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
             
             return tasks
         else:
-            sections = await task_storage.get_tasks_by_ui_section(account)
+            # Get tasks by UI section, with delta updates if 'since' is provided
+            sections = await task_storage.get_tasks_by_ui_section(account, since)
             
             # Log a sample task from each section if available
             for section, section_tasks in sections.items():
-                if section_tasks and len(section_tasks) > 0:
+                if section != 'removed_task_ids' and section_tasks and len(section_tasks) > 0:
                     logger.debug(f"Section '{section}' has {len(section_tasks)} tasks")
                     if section == 'requested' or section == 'completed':  # Just log a couple sections
                         sample = {k: "..." for k in section_tasks[0].keys()}
@@ -407,11 +420,43 @@ async def clear_user_state(account: str):
     Clear all state related to a specific wallet address when they log out.
     """
     try:
-        logger.debug(f"Clearing state for account: {account}")
+        logger.info(f"Clearing state for account: {account}")
+        
+        # Aggressive reset of the TaskStorage state
+        # This is a nuclear option but necessary to prevent data bleeding
+        try:
+            # First, stop any refresh loop for this account
+            task_storage.stop_refresh_loop(account)
+            
+            # Reset the entire UserState object
+            task_storage._state = None
+            task_storage._state = UserState()
+            
+            # Clear all tracking dictionaries
+            task_storage._last_processed_ledger = {}
+            task_storage._is_refreshing = {}
+            task_storage._refresh_tasks = {}
+            task_storage._task_update_timestamps = {}
+            
+            # Clear any caches
+            if hasattr(task_storage, "_cache"):
+                for cache_type in task_storage._cache:
+                    task_storage._cache[cache_type] = {}
+            
+            if hasattr(task_storage, "_cache_expiry"):
+                for cache_type in task_storage._cache_expiry:
+                    task_storage._cache_expiry[cache_type] = {}
+            
+            logger.info(f"Complete state reset performed")
+        except Exception as e:
+            logger.error(f"Error during state reset: {str(e)}", exc_info=True)
+        
+        # Now do the normal per-account cleanup as well
         task_storage.clear_user_state(account)
+        
         return {"status": "success", "message": f"State cleared for {account}"}
     except Exception as e:
-        logger.error(f"Error clearing state for {account}: {str(e)}")
+        logger.error(f"Error clearing state for {account}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/transaction/send")
@@ -1149,6 +1194,39 @@ async def send_handshake_to_remembrancer(req: HandshakeRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error sending handshake to remembrancer: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/cache/clear/{account}")
+async def clear_user_cache(account: str):
+    """
+    Force clear all caches for a specific account.
+    This ensures a complete state reset when switching accounts.
+    """
+    try:
+        logger.debug(f"Clearing cache for account: {account}")
+        
+        # Clear in-memory caches
+        if hasattr(task_storage, "_cache"):
+            # Clear direct wallet address entries
+            for cache_type in task_storage._cache:
+                if account in task_storage._cache[cache_type]:
+                    del task_storage._cache[cache_type][account]
+                
+                # Clear cache entries with wallet_address prefix
+                keys_to_remove = []
+                for key in task_storage._cache[cache_type]:
+                    if isinstance(key, str) and key.startswith(f"{account}_"):
+                        keys_to_remove.append(key)
+                
+                for key in keys_to_remove:
+                    del task_storage._cache[cache_type][key]
+        
+        # Clear any API-level caches
+        # (You may need to add more specific cache clearing logic here)
+        
+        return {"status": "success", "message": f"Cache cleared for {account}"}
+    except Exception as e:
+        logger.error(f"Error clearing cache for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mount the router under /api

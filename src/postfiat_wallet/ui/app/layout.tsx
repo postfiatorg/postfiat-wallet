@@ -1,6 +1,10 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider, AuthState } from '../context/AuthContext';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,15 +23,42 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
+  // Create initial auth state
+  const [authState, setAuthState] = useState<AuthState>({
+    isAuthenticated: false,
+    address: null,
+    username: null,
+    password: null
+  });
+
+  // Clear auth function
+  const handleClearAuth = async () => {
+    setAuthState({
+      isAuthenticated: false,
+      address: null,
+      username: null,
+      password: null
+    });
+  };
+
+  useEffect(() => {
+    // Clear all auth data from localStorage on app startup
+    localStorage.removeItem('wallet_address');
+    localStorage.removeItem('username');
+    localStorage.removeItem('auto_auth');
+    
+    console.log('Auth data cleared from localStorage');
+  }, []);
+
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <AuthProvider value={authState} onClearAuth={handleClearAuth}>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

@@ -58,30 +58,13 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
 
       console.log("Auth data:", data);
       
-      // Initialize tasks after successful authentication
-      try {
-        await apiService.post(`/tasks/initialize/${data.address}`);
-        console.log('Tasks initialized successfully');
-      } catch (err) {
-        console.error('Task initialization error:', err);
-        throw err;
-      }
+      // First complete authentication with the server response values
+      // to set auth state properly before making other API calls
+      onAuth(data.address, username, password);
       
-      if (mode === 'create' || mode === 'import') {
-        // Clear state for the new account
-        try {
-          await apiService.post(`/tasks/clear-state/${data.address}`);
-          console.log("Server state cleared for new account:", data.address);
-        } catch (error) {
-          console.error("Error clearing server state:", error);
-        }
-        
-        // Automatically sign in the user instead of making them sign in manually
-        onAuth(data.address, username, password);
-      } else {
-        // Normal signin flow - pass both address and username
-        onAuth(data.address, username, password);
-      }
+      // THEN initialize tasks, but only after authentication is set
+      await initializeUserTasks(data.address);
+      
     } catch (err) {
       console.error("Error in handleSubmit:", err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
@@ -93,6 +76,7 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
   const handleGenerateWallet = async () => {
     console.log("handleGenerateWallet called");
     try {
+      // This is a public endpoint that should work without authentication
       console.log("Sending wallet generation request");
       const wallet = await apiService.post<WalletResponse>('/wallet/generate');
       
@@ -102,6 +86,22 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
     } catch (err) {
       console.error("Error in handleGenerateWallet:", err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
+    }
+  };
+
+  // Move task initialization into a separate function that's only called after successful auth
+  const initializeUserTasks = async (userAddress: string) => {
+    try {
+      await apiService.post(`/tasks/clear-state/${userAddress}`);
+      console.log("Server state cleared for new account:", userAddress);
+      
+      await apiService.post(`/tasks/initialize/${userAddress}`);
+      console.log('Tasks initialized successfully for:', userAddress);
+      
+      await apiService.post(`/tasks/start-refresh/${userAddress}`);
+      console.log('Task refresh loop started for:', userAddress);
+    } catch (err) {
+      console.error('Task initialization error:', err);
     }
   };
 

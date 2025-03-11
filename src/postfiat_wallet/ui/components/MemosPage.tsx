@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
+'use client';
+
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { AuthContext, useAuthAccount } from '../context/AuthContext';
 import { PasswordConfirmModal } from './modals/PasswordConfirmModal';
 import DecryptMessagesModal from './modals/DecryptMessagesModal';
 import { apiService } from '../services/apiService';
@@ -8,6 +10,7 @@ import { apiService } from '../services/apiService';
 interface MessagesResponse {
   status: string;
   messages: Message[];
+  removed_message_ids?: string[];
 }
 
 interface SendMessageResponse {
@@ -40,6 +43,8 @@ interface MemosPageProps {
 }
 
 const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
+  // Add the useAuthAccount hook for tracking current account
+  const { isAuthenticated, isCurrentAccount } = useAuthAccount();
   const auth = useContext(AuthContext);
   const ODV_ADDRESS = 'rJ1mBMhEBKack5uTQvM8vWoAntbufyG9Yn';
   const [activeMode, setActiveMode] = useState<'odv' | 'logging'>('odv');
@@ -95,6 +100,13 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   // Add a ref for the messages container
   const messagesContainerRef = React.useRef<HTMLDivElement>(null);
   
+  // Add this with other state variables
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
+  const [isPageVisible, setIsPageVisible] = useState<boolean>(true);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [lastRefreshTime, setLastRefreshTime] = useState<number>(0);
+  const refreshThrottleTime = 10000; // 10 seconds between manual refreshes
+  
   // Add an effect to initialize scroll position after messages load
   useEffect(() => {
     if (messagesDecrypted && messages.length > 0 && !isLoading && !initialFetching) {
@@ -105,56 +117,117 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     }
   }, [messages, messagesDecrypted, isLoading, initialFetching]);
 
-  // Modify fetchMessages to include a forceRefresh parameter
+  // Modify fetchMessages to check current account and include delta updates
   const fetchMessages = async (password?: string, forceRefresh: boolean = false) => {
-    if (!address) return;
-    
-    // Use auth context password if available and no specific password provided
-    const passwordToUse = password || sessionPassword || auth.password;
-    
-    // If no password is available, show the decrypt modal
-    if (!passwordToUse) {
-      setDecryptError(undefined);
-      setShowDecryptModal(true);
+    // Skip if this isn't the current active account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping fetch for inactive account: ${address}`);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      setInitialFetching(false);
       return;
     }
     
-    setIsRefreshing(true);
+    // Set loading states
+    if (!forceRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    
     try {
-      // Add artificial delay for better UX
+      // Use auth context password if available and no specific password provided
+      const passwordToUse = password || sessionPassword || auth.password;
+      
+      // If no password is available, show the decrypt modal
+      if (!passwordToUse) {
+        setDecryptError(undefined);
+        setShowDecryptModal(true);
+        return;
+      }
+      
       const [response] = await Promise.all([
         apiService.post<MessagesResponse>(`/odv/messages/${address}`, {
           password: passwordToUse,
-          refresh: forceRefresh // Add this parameter to request fresh data
+          refresh: forceRefresh, // Add this parameter to request fresh data
+          since: !forceRefresh && lastRefreshTimestamp > 0 ? lastRefreshTimestamp : undefined
         }),
         new Promise(resolve => setTimeout(resolve, 1000)) // Minimum 1 second refresh
       ]);
       
       if (response.status === 'success') {
-        // Transform API messages to our format
-        const apiMessages = response.messages.map((msg: any) => ({
-          id: msg.id,
-          from: msg.from,
-          to: msg.to,
-          content: msg.content,
-          timestamp: msg.timestamp
-        }));
+        // Update timestamp for next refresh
+        setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
         
-        setMessages(apiMessages);
-        
-        // Update thread with last message if we have any
-        if (apiMessages.length > 0) {
-          const lastMsg = apiMessages[apiMessages.length - 1];
-          setThreads(prev => prev.map(thread => 
-            thread.address === ODV_ADDRESS 
-              ? { 
-                  ...thread, 
-                  lastMessage: lastMsg.content, 
-                  timestamp: lastMsg.timestamp,
-                  unread: 0
-                }
-              : thread
-          ));
+        if (forceRefresh || !lastRefreshTimestamp) {
+          // Full refresh - replace everything
+          setMessages(response.messages.map((msg: any) => ({
+            id: msg.id,
+            from: msg.from,
+            to: msg.to,
+            content: msg.content,
+            timestamp: msg.timestamp
+          })));
+          
+          // Update thread with last message if we have any
+          if (response.messages.length > 0) {
+            const lastMsg = response.messages[response.messages.length - 1];
+            setThreads(prev => prev.map(thread => 
+              thread.address === ODV_ADDRESS 
+                ? { 
+                    ...thread, 
+                    lastMessage: lastMsg.content, 
+                    timestamp: lastMsg.timestamp,
+                    unread: 0
+                  }
+                : thread
+            ));
+          }
+        } else {
+          // Delta update - only add new messages
+          setMessages(prevMessages => {
+            // Create a map of existing messages for quick lookup
+            const messageMap = new Map(prevMessages.map(msg => [msg.id, msg]));
+            
+            // Add new messages to the map
+            response.messages.forEach((msg: any) => {
+              messageMap.set(msg.id, {
+                id: msg.id,
+                from: msg.from,
+                to: msg.to,
+                content: msg.content,
+                timestamp: msg.timestamp
+              });
+            });
+            
+            // Handle removed messages if any
+            if (response.removed_message_ids) {
+              response.removed_message_ids.forEach((id: string) => {
+                messageMap.delete(id);
+              });
+            }
+            
+            // Convert back to array and sort by timestamp
+            const updatedMessages = Array.from(messageMap.values());
+            updatedMessages.sort((a, b) => a.timestamp - b.timestamp);
+            
+            return updatedMessages;
+          });
+          
+          // Update threads if there are new messages
+          if (response.messages.length > 0) {
+            const lastMsg = response.messages[response.messages.length - 1];
+            setThreads(prev => prev.map(thread => 
+              thread.address === ODV_ADDRESS 
+                ? { 
+                    ...thread, 
+                    lastMessage: lastMsg.content, 
+                    timestamp: lastMsg.timestamp,
+                    unread: 0
+                  }
+                : thread
+            ));
+          }
         }
         
         // Always mark messages as decrypted on success and store password
@@ -179,37 +252,114 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
       setIsLoading(false);
       setIsRefreshing(false);
       setInitialFetching(false); // Clear initialFetching state when done
+      setLastRefreshTime(Date.now()); // For throttling
     }
   };
   
-  // Update scheduleRefresh to force refresh
+  // Update scheduleRefresh to check current account and use throttling
   const scheduleRefresh = (delayMs = 5000) => {
+    // Skip if not current account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping refresh for inactive account: ${address}`);
+      return;
+    }
+    
     // Clear any existing timeout
     if (refreshTimeoutId !== null) {
       clearTimeout(refreshTimeoutId);
     }
     
+    // Check if we should throttle
+    const now = Date.now();
+    if (now - lastRefreshTime < refreshThrottleTime) {
+      console.log("Refresh throttled. Please wait before refreshing again.");
+      return;
+    }
+    
     // Set new timeout
     const timeoutId = window.setTimeout(() => {
-      fetchMessages(undefined, true); // Pass true to force refresh from blockchain
+      if (isCurrentAccount(address)) {
+        fetchMessages(undefined, true); // Force refresh for manual refreshes
+      }
       setRefreshTimeoutId(null);
     }, delayMs);
     
     setRefreshTimeoutId(Number(timeoutId));
   };
 
-  // Update the periodic refresh to force a refresh from blockchain
+  // Update the periodic refresh to check current account and use delta updates
   useEffect(() => {
-    if (!address || !messagesDecrypted) return;
+    if (!address || !messagesDecrypted || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log(`Not starting refresh loop - inactive account: ${address}`);
+      return;
+    }
     
-    // Set up periodic refresh
-    const intervalId = setInterval(() => {
-      fetchMessages(undefined, true); // Pass true to force refresh from blockchain
-    }, 30000); // 30 seconds
+    console.log(`Starting message refresh for current account: ${address}`);
     
-    // Clean up on unmount
-    return () => clearInterval(intervalId);
-  }, [address, messagesDecrypted]);
+    // Function for visibility change handler
+    const handleVisibilityChange = () => {
+      setIsPageVisible(!document.hidden);
+    };
+    
+    // Set up initial interval for refreshes
+    const startInterval = () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      
+      intervalRef.current = setInterval(() => {
+        if (!isRefreshing && document.visibilityState === 'visible' && isCurrentAccount(address)) {
+          fetchMessages(undefined, false); // Use delta updates for auto-refresh
+        } else if (!isCurrentAccount(address)) {
+          // Stop the interval if no longer current account
+          console.log(`Stopping interval for inactive account: ${address}`);
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+        }
+      }, 30000); // 30 seconds
+    };
+    
+    // Start the interval
+    startInterval();
+    
+    // Add visibility change listener
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Clean up
+    return () => {
+      if (intervalRef.current) {
+        console.log(`Cleaning up message refresh interval for: ${address}`);
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [address, messagesDecrypted, isAuthenticated]);
+  
+  // Restart interval when page becomes visible
+  useEffect(() => {
+    if (isPageVisible && address && messagesDecrypted) {
+      // Fetch messages when page becomes visible again
+      fetchMessages(undefined, false); // Use delta updates
+      
+      // Restart the interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      
+      intervalRef.current = setInterval(() => {
+        if (!isRefreshing) {
+          fetchMessages(undefined, false); // Use delta updates for auto-refresh
+        }
+      }, 30000); // 30 seconds
+    } else if (!isPageVisible && intervalRef.current) {
+      // Clear interval when page is hidden
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, [isPageVisible, address, messagesDecrypted]);
 
   // Handle password confirmation
   const handlePasswordConfirm = async (password: string) => {
@@ -369,7 +519,13 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   };
 
   // Prepare to send message (show password modal only if needed)
-  const sendMessageToODV = () => {
+  const sendMessageToODV = async () => {
+    // Skip if not current account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping send for inactive account: ${address}`);
+      return;
+    }
+    
     if (!newMessage.trim()) {
       setError('Please enter a message');
       return;
@@ -380,7 +536,7 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
     
     // If we already have a password, use it directly
     if (storedPassword) {
-      executeSendMessage(storedPassword).catch(() => {
+      await executeSendMessage(storedPassword).catch(() => {
         // If using stored password fails, ask for it again
         setPendingAction('sendMessage');
         setPasswordError('Stored password is invalid. Please enter your password again.');
@@ -400,6 +556,12 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
 
   // Prepare to send log (show password modal only if needed)
   const sendLogEntry = () => {
+    // Skip if not current account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping log entry for inactive account: ${address}`);
+      return;
+    }
+    
     if (!newMessage.trim()) {
       setError('Please enter a log message');
       return;
@@ -430,6 +592,12 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
 
   // Update the handleSendMessage function to handle both modes
   const handleSendMessage = () => {
+    // Skip if not current account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping message send for inactive account: ${address}`);
+      return;
+    }
+    
     if (activeMode === 'odv') {
       sendMessageToODV();
     } else if (activeMode === 'logging') {
@@ -439,6 +607,12 @@ const MemosPage: React.FC<MemosPageProps> = ({ address }) => {
   
   // Update the handleDecrypt function to show loading state
   const handleDecrypt = async (password: string) => {
+    // Skip if not current account
+    if (!isCurrentAccount(address)) {
+      console.log(`Skipping decrypt for inactive account: ${address}`);
+      return;
+    }
+    
     setIsDecrypting(true); // Set decrypt button to loading state
     try {
       await fetchMessages(password);
