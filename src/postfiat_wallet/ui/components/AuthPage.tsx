@@ -35,6 +35,22 @@ export default function AuthPage({ onAuth }: { onAuth: (address: string, usernam
       return;
     }
 
+    // Clear any previous account's requests and cache
+    try {
+      // Import here to avoid circular dependencies
+      await import('../services/apiService').then(({ apiService }) => {
+        // Use the safe accessor instead of direct window access
+        const currentAccount = typeof window !== 'undefined' ? window.ACTIVE_ACCOUNT : null;
+        if (currentAccount) {
+          console.log("Cleaning up previous account before authentication");
+          apiService.abortRequestsForAddress(currentAccount);
+          apiService.clearCache(currentAccount);
+        }
+      });
+    } catch (error) {
+      console.error("Error during pre-auth cleanup:", error);
+    }
+
     let endpoint = '';
     if (mode === 'signin') {
       endpoint = `/auth/signin`;

@@ -121,56 +121,69 @@ class TaskStorage:
         
         logger.info(f"Initialized tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
 
-    async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
+    async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None):
         """Start a background task to periodically refresh tasks for this user"""
         if wallet_address in self._refresh_tasks and not self._refresh_tasks[wallet_address].done():
             logger.info(f"Refresh loop already running for {wallet_address}")
             return
         
-        # Reference to the TaskStorage instance for the closure
-        task_storage = self
+        logger.info(f"Starting refresh loop for {wallet_address}")
         
-        async def _refresh():
-            """Background task to periodically refresh tasks"""
-            try:
-                refresh_interval = 30  # seconds
-                while True:
-                    try:
-                        # Get the last ledger we processed
-                        start_ledger = task_storage._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
-                        
-                        # Only fetch new transactions
-                        account_info = await task_storage._get_client(wallet_address).get_account_info(wallet_address)
-                        current_ledger = account_info.get("ledger_current_index", 0)
-                        
-                        if start_ledger < current_ledger:
-                            logger.debug(f"Refreshing tasks for {wallet_address}, ledgers {start_ledger+1} to {current_ledger}")
-                            
-                            # Only get the new transactions
-                            txn_stream = task_storage._get_client(wallet_address).get_account_txns(
-                                wallet_address, 
-                                start_ledger + 1, 
-                                current_ledger
-                            )
-                            
-                            # Process the transactions
-                            await task_storage._decode_and_store_transactions(wallet_address, txn_stream, user_wallet)
-                            
-                            # Update the last processed ledger
-                            task_storage._last_processed_ledger[wallet_address] = current_ledger
-                        
-                    except Exception as e:
-                        logger.error(f"Error in refresh loop: {e}", exc_info=True)
+        async def refresh_task():
+            # Track consecutive errors for backoff
+            consecutive_errors = 0
+            # Start with a longer initial delay to let UI load first
+            initial_delay = True
+            
+            while True:
+                try:
+                    if initial_delay:
+                        # Give UI time to load before starting polling
+                        await asyncio.sleep(10)
+                        initial_delay = False
                     
-                    # Wait before next refresh
-                    await asyncio.sleep(refresh_interval)
-            except asyncio.CancelledError:
-                # Task was cancelled, exit gracefully
-                logger.info(f"Refresh loop for {wallet_address} was cancelled")
+                    # Calculate adaptive delay based on activity
+                    # Start with 10s base polling interval
+                    if consecutive_errors == 0:
+                        base_delay = 10
+                    else:
+                        # Use exponential backoff for errors
+                        base_delay = min(10 * (2 ** consecutive_errors), 60)
+                    
+                    # Get last processed ledger or use earliest
+                    last_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+                    
+                    # Only log on first poll or errors
+                    if consecutive_errors == 0 and last_ledger == EARLIEST_LEDGER_SEQ:
+                        logger.debug(f"Starting initial refresh for {wallet_address}")
+                    elif consecutive_errors > 0:
+                        logger.debug(f"Retrying refresh for {wallet_address} after error")
+                    
+                    # Process new transactions since last update
+                    new_updates = await self._process_new_transactions(wallet_address, last_ledger)
+                    
+                    # Use adaptive polling - longer when inactive
+                    if new_updates:
+                        consecutive_errors = 0
+                        # Activity detected - poll more frequently
+                        await asyncio.sleep(10)  # 10s with activity
+                    else:
+                        # No activity - gradually increase polling interval
+                        consecutive_errors = min(consecutive_errors + 0.2, 3)  # Cap at ~40s
+                        await asyncio.sleep(base_delay)
+                    
+                except asyncio.CancelledError:
+                    logger.info(f"Refresh task for {wallet_address} was cancelled")
+                    break
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"Error in refresh task for {wallet_address}: {str(e)}", exc_info=True)
+                    # Longer delay after errors
+                    await asyncio.sleep(base_delay)
         
-        # Start the refresh loop as a Task
-        self._refresh_tasks[wallet_address] = asyncio.create_task(_refresh())
-        logger.info(f"Started refresh loop for {wallet_address}")
+        # Start the refresh task and store it
+        refresh_coro = refresh_task()
+        self._refresh_tasks[wallet_address] = asyncio.create_task(refresh_coro)
 
     def stop_refresh_loop(self, wallet_address: str) -> None:
         """

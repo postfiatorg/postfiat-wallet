@@ -41,12 +41,60 @@ export default function RootLayout({
   };
 
   useEffect(() => {
-    // Clear all auth data from localStorage on app startup
-    localStorage.removeItem('wallet_address');
-    localStorage.removeItem('username');
-    localStorage.removeItem('auto_auth');
-    
-    console.log('Auth data cleared from localStorage');
+    // Clear ALL auth data on startup
+    if (typeof window !== 'undefined') {
+      // Clear localStorage
+      localStorage.removeItem('wallet_address');
+      localStorage.removeItem('username');
+      localStorage.removeItem('auto_auth');
+      localStorage.removeItem('auth_token');
+      
+      // Clear sessionStorage
+      sessionStorage.clear();
+      
+      // Reset global variables
+      window.ACTIVE_ACCOUNT = null;
+      
+      // Ensure API service is set to unauthenticated
+      import('../services/apiService').then(({ apiService }) => {
+        apiService.setAuthenticated(false);
+        apiService.clearAllCache();
+      });
+      
+      // Reset server state (stop all background tasks)
+      fetch('/api/debug/reset', {
+        method: 'POST',
+      })
+      .then(response => response.json())
+      .then(data => {
+        console.log('Server state reset complete:', data);
+      })
+      .catch(error => {
+        console.error('Failed to reset server state:', error);
+      });
+      
+      console.log('Auth completely reset on application startup');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      console.log('---- DEBUGGING PERSISTENT DATA ----');
+      
+      // Log all localStorage keys
+      console.log('LocalStorage keys:', Object.keys(localStorage));
+      
+      // Log all sessionStorage keys
+      console.log('SessionStorage keys:', Object.keys(sessionStorage));
+      
+      // Check for indexedDB databases
+      indexedDB.databases().then(dbs => {
+        console.log('IndexedDB databases:', dbs);
+      });
+      
+      // Log cookies
+      console.log('Cookies:', document.cookie);
+    }
   }, []);
 
   return (

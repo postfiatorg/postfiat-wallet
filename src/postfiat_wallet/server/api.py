@@ -24,6 +24,7 @@ import string
 import datetime
 import time
 from postfiat.nodes.task.state import UserState
+import asyncio
 
 # Import SDK constants and models
 from postfiat.nodes.task.constants import REMEMBRANCER_ADDRESS
@@ -281,25 +282,39 @@ async def generate_wallet(request: Request):
 # --------------------
 
 @router.post("/tasks/initialize/{account}")
-async def initialize_tasks(account: str):
+async def initialize_tasks(account: str, request: Request):
     """
-    Fetch all historical tasks/messages for this account
-    and store them in memory for querying.
+    Initialize task storage for the user - optimized version
     """
-    logger.info(f"Received initialize tasks request for account: {account}")
     try:
-        # First make sure any previous data for this account is fully cleared
-        logger.info(f"Pre-emptively clearing state for account before initialization: {account}")
-        task_storage.clear_user_state(account)
+        # 1. First do a lightweight initialization for quick UI loading
+        logger.info(f"Starting optimized initialization for {account}")
         
-        # Now initialize fresh data
-        await task_storage.initialize_user_tasks(account)
-        logger.info(f"Successfully initialized tasks for account: {account}")
-        return {"status": "success"}
+        # Get the request body
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        
+        # Check for fast initialization flag
+        fast_init = body.get("fast_init", True)
+        
+        if fast_init:
+            # Start with only recent data for faster loading (last 24 hours)
+            one_day_ago = int(time.time()) - (24 * 60 * 60)
+            await task_storage.initialize_recent_tasks(account, one_day_ago)
+            
+            # Start refresh loop with longer initial delay
+            await task_storage.start_refresh_loop(account)
+            
+            # Full initialization will happen in background via refresh loop
+            return {"status": "success", "mode": "fast"}
+        else:
+            # Fallback to full initialization if specifically requested
+            await task_storage.initialize_user_tasks(account)
+            await task_storage.start_refresh_loop(account)
+            return {"status": "success", "mode": "full"}
+            
     except Exception as e:
         logger.error(f"Error initializing tasks for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        
 
 @router.post("/tasks/start-refresh/{account}")
 async def start_refresh(account: str):
@@ -422,38 +437,36 @@ async def clear_user_state(account: str):
     try:
         logger.info(f"Clearing state for account: {account}")
         
-        # Aggressive reset of the TaskStorage state
-        # This is a nuclear option but necessary to prevent data bleeding
-        try:
-            # First, stop any refresh loop for this account
-            task_storage.stop_refresh_loop(account)
-            
-            # Reset the entire UserState object
-            task_storage._state = None
-            task_storage._state = UserState()
-            
-            # Clear all tracking dictionaries
-            task_storage._last_processed_ledger = {}
-            task_storage._is_refreshing = {}
-            task_storage._refresh_tasks = {}
-            task_storage._task_update_timestamps = {}
-            
-            # Clear any caches
-            if hasattr(task_storage, "_cache"):
-                for cache_type in task_storage._cache:
-                    task_storage._cache[cache_type] = {}
-            
-            if hasattr(task_storage, "_cache_expiry"):
-                for cache_type in task_storage._cache_expiry:
-                    task_storage._cache_expiry[cache_type] = {}
-            
-            logger.info(f"Complete state reset performed")
-        except Exception as e:
-            logger.error(f"Error during state reset: {str(e)}", exc_info=True)
+        # Fix: First, stop any refresh loop for this account
+        task_storage.stop_refresh_loop(account)
         
-        # Now do the normal per-account cleanup as well
+        # Fix: Don't reset the entire state - just clear this account's data
         task_storage.clear_user_state(account)
         
+        # Additionally clear any ODV services for this account
+        if account in odv_services:
+            del odv_services[account]
+            
+        # Clear any account-specific caches
+        if hasattr(task_storage, "_cache"):
+            for cache_type in task_storage._cache:
+                keys_to_remove = []
+                for key in task_storage._cache[cache_type]:
+                    if account in key:
+                        keys_to_remove.append(key)
+                for key in keys_to_remove:
+                    del task_storage._cache[cache_type][key]
+        
+        if hasattr(task_storage, "_cache_expiry"):
+            for cache_type in task_storage._cache_expiry:
+                keys_to_remove = []
+                for key in task_storage._cache_expiry[cache_type]:
+                    if account in key:
+                        keys_to_remove.append(key)
+                for key in keys_to_remove:
+                    del task_storage._cache_expiry[cache_type][key]
+        
+        logger.info(f"State cleared for account: {account}")
         return {"status": "success", "message": f"State cleared for {account}"}
     except Exception as e:
         logger.error(f"Error clearing state for {account}: {str(e)}", exc_info=True)
@@ -1229,6 +1242,51 @@ async def clear_user_cache(account: str):
         logger.error(f"Error clearing cache for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Add this endpoint after the cache/clear endpoint (around line 1230)
+@router.post("/debug/reset")
+async def reset_server_state():
+    """
+    Reset all server state - clears all accounts, tasks, and caches.
+    This is primarily for development to ensure a clean slate.
+    """
+    try:
+        logger.info("FULL SERVER STATE RESET REQUESTED")
+        
+        # 1. Cancel all background refresh tasks
+        for address, task in list(task_storage._refresh_tasks.items()):
+            if not task.done():
+                logger.info(f"Cancelling refresh task for {address}")
+                task.cancel()
+                try:
+                    # Wait for task to properly terminate
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    pass  # Expected when cancelling
+        
+        # 2. Clear all data structures
+        logger.info("Clearing all server-side state")
+        task_storage._clients = {}
+        task_storage._user_states = {}
+        task_storage._refresh_tasks = {}
+        task_storage._last_processed_ledger = {}
+        task_storage._task_update_timestamps = {}
+        
+        # 3. Clear caches
+        if hasattr(task_storage, "_cache"):
+            task_storage._cache = {}
+        if hasattr(task_storage, "_cache_expiry"):
+            task_storage._cache_expiry = {}
+            
+        # 4. Clear ODV services
+        global odv_services
+        odv_services = {}
+        
+        logger.info("Server state reset complete")
+        return {"status": "success", "message": "Complete server state reset successful"}
+    except Exception as e:
+        logger.error(f"Error during server reset: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Mount the router under /api
 logger.info("Registering API routes...")
 app.include_router(router, prefix="/api")
@@ -1237,11 +1295,39 @@ logger.info("API routes registered")
 @app.on_event("startup")
 async def startup_event():
     """
-    On startup, log the routes for debugging.
+    On startup, log the routes for debugging and clear any stale state.
     """
     routes = [{"path": route.path, "name": route.name, "methods": list(route.methods)} 
               for route in app.routes]
     logger.info(f"Registered routes: {routes}")
+    
+    # Clear all state on server startup
+    logger.info("STARTUP: Clearing all server state")
+    
+    # Cancel any existing refresh tasks
+    for address, task in list(task_storage._refresh_tasks.items()):
+        if not task.done():
+            logger.info(f"STARTUP: Cancelling refresh task for {address}")
+            task.cancel()
+    
+    # Reset all data structures
+    task_storage._clients = {}
+    task_storage._user_states = {}
+    task_storage._refresh_tasks = {}
+    task_storage._last_processed_ledger = {}
+    task_storage._task_update_timestamps = {}
+    
+    # Clear caches
+    if hasattr(task_storage, "_cache"):
+        task_storage._cache = {}
+    if hasattr(task_storage, "_cache_expiry"):
+        task_storage._cache_expiry = {}
+        
+    # Clear ODV services
+    global odv_services
+    odv_services = {}
+    
+    logger.info("STARTUP: Server state reset complete")
 
 @app.options("/{full_path:path}")
 async def options_handler():

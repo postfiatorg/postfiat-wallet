@@ -1,16 +1,14 @@
 import { createContext, useContext, ReactNode, useState, useEffect } from 'react';
 import { AuthState } from '../types/auth';
 
-// Create a global registry to track active accounts
-// This helps prevent API calls to old accounts
-let ACTIVE_ACCOUNT: string | null = null;
-
-interface AuthContextType extends AuthState {
-  clearAuth: () => Promise<void>;
-  setPassword: (password: string) => void;
-  isCurrentAccount: (address: string | null) => boolean;
+// Type declaration for window
+declare global {
+  interface Window {
+    ACTIVE_ACCOUNT: string | null;
+  }
 }
 
+// Create context without accessing window
 const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   address: null,
@@ -21,6 +19,27 @@ const AuthContext = createContext<AuthContextType>({
   isCurrentAccount: () => false
 });
 
+// Safe function to get the active account
+function getActiveAccount(): string | null {
+  if (typeof window !== 'undefined') {
+    return window.ACTIVE_ACCOUNT;
+  }
+  return null;
+}
+
+// Safe function to set the active account
+function setActiveAccount(address: string | null): void {
+  if (typeof window !== 'undefined') {
+    window.ACTIVE_ACCOUNT = address;
+  }
+}
+
+interface AuthContextType extends AuthState {
+  clearAuth: () => Promise<void>;
+  setPassword: (password: string) => void;
+  isCurrentAccount: (address: string | null) => boolean;
+}
+
 export function AuthProvider({ 
   children,
   value,
@@ -30,10 +49,33 @@ export function AuthProvider({
   value: AuthState;
   onClearAuth: () => Promise<void>;
 }) {
+  // Initialize the window variable IMMEDIATELY, not in an effect
+  if (typeof window !== 'undefined') {
+    // Only set if not already set - this ensures we don't lose the current value
+    if (window.ACTIVE_ACCOUNT === undefined) {
+      console.log("Initializing ACTIVE_ACCOUNT to null");
+      window.ACTIVE_ACCOUNT = null;
+    }
+  }
+
   // Update the global tracker whenever auth state changes
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
     console.log("Auth state changed, updating active account:", value.address);
-    ACTIVE_ACCOUNT = value.address;
+    
+    // Clear previous account's cache when switching accounts
+    const previousAccount = getActiveAccount();
+    if (previousAccount && previousAccount !== value.address) {
+      import('../services/apiService').then(({ apiService }) => {
+        console.log(`Cleaning up resources for previous account: ${previousAccount}`);
+        apiService.clearCache(previousAccount);
+        apiService.abortRequestsForAddress(previousAccount);
+      });
+    }
+    
+    // Update global account tracker
+    setActiveAccount(value.address);
   }, [value.address]);
 
   const setPassword = (password: string) => {
@@ -42,12 +84,24 @@ export function AuthProvider({
   
   // Add a helper method to check if an address is the current active one
   const isCurrentAccount = (address: string | null) => {
-    return address !== null && address === ACTIVE_ACCOUNT;
+    if (typeof window === 'undefined') return false;
+    return address !== null && address === getActiveAccount();
+  };
+
+  // Modify clearAuth to also clear cache
+  const clearAuthWithCache = async () => {
+    // Clear cache before auth
+    import('../services/apiService').then(({ apiService }) => {
+      apiService.clearAllCache();
+    });
+    
+    // Call original clearAuth
+    await onClearAuth();
   };
 
   const contextValue = {
     ...value,
-    clearAuth: onClearAuth,
+    clearAuth: clearAuthWithCache,
     setPassword,
     isCurrentAccount
   };
@@ -59,25 +113,28 @@ export function AuthProvider({
   );
 }
 
-// Export a custom hook for components to safely use auth state
+// Update useAuthAccount hook to be more defensive
 export function useAuthAccount() {
   const auth = useContext(AuthContext);
   const [componentId] = useState(() => Math.random().toString(36).substr(2, 9));
   
+  // Ensure this component is using the current active account
+  const isActive = typeof window !== 'undefined' && auth.address === getActiveAccount();
+  
   // Log when components start/stop using an account
   useEffect(() => {
-    console.log(`[${componentId}] Component using address: ${auth.address}`);
+    console.log(`[${componentId}] Component using address: ${auth.address}, active: ${isActive}`);
     
     return () => {
       console.log(`[${componentId}] Component unmounting, was using: ${auth.address}`);
     };
-  }, [auth.address, componentId]);
+  }, [auth.address, componentId, isActive]);
   
   return {
-    address: auth.address,
-    isAuthenticated: auth.isAuthenticated,
-    username: auth.username,
-    isCurrentAccount: auth.isCurrentAccount // Expose the helper method
+    address: isActive ? auth.address : null,
+    isAuthenticated: isActive && auth.isAuthenticated,
+    username: isActive ? auth.username : null,
+    isCurrentAccount: auth.isCurrentAccount
   };
 }
 
