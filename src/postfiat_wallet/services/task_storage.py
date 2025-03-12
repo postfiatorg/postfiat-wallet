@@ -101,10 +101,9 @@ class TaskStorage:
         start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
         
         try:
-            # Use get_account_txns instead - the client doesn't have get_account_info
-            # Just get the latest 1 transaction to determine current ledger
+            # Use get_account_txns without the limit parameter
             current_ledger = -1  # Default to latest ledger
-            txn_info_stream = client.get_account_txns(wallet_address, -1, -1, limit=1)
+            txn_info_stream = client.get_account_txns(wallet_address, -1, -1)
             
             # Try to extract current ledger from the first transaction
             async for txn in txn_info_stream:
@@ -611,10 +610,10 @@ class TaskStorage:
         ledgers_since = max(1, int(seconds_since / 3.5))
         
         try:
-            # Use get_account_txns instead of get_account_info
+            # Use get_account_txns without the limit parameter
             current_ledger = -1  # Default to latest ledger
             txn_info_stream = self._get_client(wallet_address).get_account_txns(
-                wallet_address, -1, -1, limit=1
+                wallet_address, -1, -1  # Remove limit parameter
             )
             
             # Try to extract current ledger from the first transaction
