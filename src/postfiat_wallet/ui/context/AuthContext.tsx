@@ -81,4 +81,5 @@ export function useAuthAccount() {
   };
 }
 
-export { AuthContext }; 
+export { AuthContext };
+export type { AuthState }; 

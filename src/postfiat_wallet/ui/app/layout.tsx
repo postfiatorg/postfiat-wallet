@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { AuthProvider, AuthState } from '../context/AuthContext';
+import { AuthProvider } from '../context/AuthContext';
+import { AuthState } from '../types/auth';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,11 +16,6 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
-
-export const metadata: Metadata = {
-  title: "Post Fiat Wallet",
-  description: "Post Fiat Wallet",
-};
 
 export default function RootLayout({
   children,
