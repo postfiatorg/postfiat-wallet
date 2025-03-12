@@ -692,3 +692,109 @@ class TaskStorage:
                 if key in self._cache_expiry[cache_type]:
                     del self._cache_expiry[cache_type][key]
 
+    async def _decode_and_store_transactions(self, wallet_address: str, txn_stream, user_wallet: Optional[Wallet] = None):
+        """
+        Process and decode transaction stream, store results in user state.
+        
+        Args:
+            wallet_address: The account address 
+            txn_stream: Stream of transactions to process
+            user_wallet: Optional wallet for message decryption
+        """
+        # Get user state
+        user_state = self._get_state(wallet_address)
+        if not user_state:
+            logger.error(f"No user state found for {wallet_address}")
+            return
+        
+        # Process each transaction
+        transaction_count = 0
+        task_count = 0
+        
+        try:
+            # First attempt task node decoding
+            task_stream = decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, 
+                                           user_account=user_wallet)
+            
+            async for update in task_stream:
+                transaction_count += 1
+                
+                # Update user state with this transaction
+                if hasattr(user_state, "apply_message"):
+                    user_state.apply_message(update)
+                    task_count += 1
+                
+            # Reset stream for remembrancer processing
+            txn_stream = self._get_client(wallet_address).get_account_txns(
+                wallet_address, 
+                EARLIEST_LEDGER_SEQ, 
+                -1
+            )
+            
+            # Next attempt remembrancer decoding
+            remembrancer_stream = decode_remembrancer_stream(txn_stream, node_account=REMEMBRANCER_ADDRESS,
+                                                          user_account=user_wallet)
+            
+            async for update in remembrancer_stream:
+                transaction_count += 1
+                
+                # Update user state with this transaction
+                if hasattr(user_state, "apply_message"):
+                    user_state.apply_message(update)
+                    task_count += 1
+                
+        except Exception as e:
+            logger.error(f"Error decoding transactions for {wallet_address}: {str(e)}", exc_info=True)
+        
+        logger.info(f"Processed {transaction_count} transactions for {wallet_address}, updated {task_count} tasks")
+
+    async def _process_new_transactions(self, wallet_address: str, last_ledger: int, txn_stream = None) -> bool:
+        """
+        Process new transactions for a wallet address since the last processed ledger.
+        Returns True if new transactions were found, False otherwise.
+        """
+        # Get client for this wallet
+        client = self._get_client(wallet_address)
+        if not client:
+            logger.error(f"No client found for {wallet_address}")
+            return False
+        
+        # Get the latest ledger
+        current_ledger = -1
+        
+        # Only query transactions if ledger has advanced
+        if last_ledger < EARLIEST_LEDGER_SEQ:
+            last_ledger = EARLIEST_LEDGER_SEQ
+        
+        try:
+            # Get transaction stream from last known ledger to current
+            if txn_stream is None:
+                txn_stream = client.get_account_txns(wallet_address, last_ledger, -1)
+            
+            # Check if we have any new transactions by trying to grab one
+            has_transactions = False
+            
+            # Copy the stream for testing
+            test_stream = client.get_account_txns(wallet_address, last_ledger, -1)
+            async for txn in test_stream:
+                has_transactions = True
+                current_ledger = max(current_ledger, txn.ledger_index if hasattr(txn, 'ledger_index') else -1)
+                break
+            
+            if not has_transactions:
+                # No new transactions since last check
+                return False
+            
+            # Process the transactions with the full stream
+            await self._decode_and_store_transactions(wallet_address, txn_stream)
+            
+            # Update the last processed ledger if we found a higher one
+            if current_ledger > last_ledger:
+                self._last_processed_ledger[wallet_address] = current_ledger
+                return True
+            
+        except Exception as e:
+            logger.error(f"Error processing new transactions for {wallet_address}: {str(e)}", exc_info=True)
+        
+        return False
+
