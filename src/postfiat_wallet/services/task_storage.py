@@ -12,10 +12,7 @@ import asyncio
 import json
 from datetime import datetime
 import time
-<<<<<<< HEAD
-=======
 import random
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
 
 from postfiat.nodes.task.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
 from postfiat.nodes.task.codecs.v0.task import decode_account_txn
@@ -103,7 +100,6 @@ class TaskStorage:
         # Check if we already have a last processed ledger for this wallet
         start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
         
-<<<<<<< HEAD
         try:
             # Use get_account_txns instead - the client doesn't have get_account_info
             # Just get the latest 1 transaction to determine current ledger
@@ -125,11 +121,6 @@ class TaskStorage:
             logger.warning(f"Error getting account info for {wallet_address}: {str(e)}")
             # Use a reasonable default - just process from last point + 1 day worth of ledgers
             current_ledger = start_ledger + 24000
-=======
-        # Fetch account info to get current ledger index
-        account_info = await client.get_account_info(wallet_address)
-        current_ledger = account_info.get("ledger_current_index", 0)
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
         
         # Only process if there are new transactions
         if start_ledger < current_ledger:
@@ -148,21 +139,10 @@ class TaskStorage:
         
         logger.info(f"Initialized tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
 
-<<<<<<< HEAD
-    async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
-        """
-        Starts a background loop that periodically polls for new ledger transactions,
-        decodes them as TaskNode messages, and updates the in-memory state. If one
-        is already active for this wallet, it won't start another.
-        """
-        if self._is_refreshing.get(wallet_address):
-            logger.debug(f"Refresh loop is already running for {wallet_address}")
-=======
     async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None):
         """Start a background task to periodically refresh tasks for this user"""
         if wallet_address in self._refresh_tasks and not self._refresh_tasks[wallet_address].done():
             logger.info(f"Refresh loop already running for {wallet_address}")
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
             return
         
         logger.info(f"Starting refresh loop for {wallet_address}")
@@ -607,8 +587,6 @@ class TaskStorage:
         
         return messages
     
-<<<<<<< HEAD
-=======
     def is_initialized(self, wallet_address: str) -> bool:
         """Check if a wallet address has been initialized"""
         return (
@@ -617,7 +595,6 @@ class TaskStorage:
             wallet_address in self._last_processed_ledger
         )
     
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
     async def initialize_recent_tasks(self, wallet_address: str, since_timestamp: int, user_wallet: Optional[Wallet] = None) -> None:
         """
         Initialize only recent tasks for a user based on a timestamp
@@ -625,18 +602,14 @@ class TaskStorage:
         """
         logger.info(f"Initializing recent tasks for {wallet_address} since {since_timestamp}")
         
-<<<<<<< HEAD
         # Ensure user is initialized
         await self.initialize_user(wallet_address)
         
-=======
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
         # Convert timestamp to an approximate ledger index
         # This is an estimation - 3.5 seconds per ledger on average
         seconds_since = int(time.time()) - since_timestamp
         ledgers_since = max(1, int(seconds_since / 3.5))
         
-<<<<<<< HEAD
         try:
             # Use get_account_txns instead of get_account_info
             current_ledger = -1  # Default to latest ledger
@@ -660,11 +633,6 @@ class TaskStorage:
             # Use last known ledger + estimation
             last_known = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
             current_ledger = last_known + ledgers_since
-=======
-        # Get account info to get current ledger index
-        account_info = await self._get_client(wallet_address).get_account_info(wallet_address)
-        current_ledger = account_info.get("ledger_current_index", 0)
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
         
         # Calculate start ledger (don't go too far back)
         start_ledger = max(EARLIEST_LEDGER_SEQ, current_ledger - ledgers_since)
@@ -683,9 +651,6 @@ class TaskStorage:
         self._last_processed_ledger[wallet_address] = current_ledger
         
         logger.info(f"Initialized recent tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
-<<<<<<< HEAD
-    
-=======
 
     def _cache_result(self, cache_type, key, data):
         """Store result in cache with expiry time"""
@@ -726,5 +691,4 @@ class TaskStorage:
                     del self._cache[cache_type][key]
                 if key in self._cache_expiry[cache_type]:
                     del self._cache_expiry[cache_type][key]
->>>>>>> 31f424aadeba0e4923c0cc9ed6958e25638ab38c
 
