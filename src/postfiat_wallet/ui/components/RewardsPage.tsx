@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useContext, useEffect } from 'react';
-import { AuthContext } from '../context/AuthContext';
+import { AuthContext, useAuthAccount } from '../context/AuthContext';
 import { apiService } from '../services/apiService';
 
 interface MessageHistoryItem {
@@ -25,43 +25,97 @@ interface TasksResponse {
 }
 
 const FinishedTasksPage = () => {
-  const { isAuthenticated, address } = useContext(AuthContext);
+  const { isAuthenticated, address, isCurrentAccount } = useAuthAccount();
   const [tasks, setTasks] = useState<FinishedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'rewarded' | 'refused'>('all');
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
 
-  // Fetch tasks from the API
-  const fetchTasks = async () => {
-    if (!address) {
+  // Fetch tasks from the API with delta updates
+  const fetchTasks = async (forceFullRefresh = false) => {
+    if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log("Not fetching rewards - inactive account or not authenticated");
       setLoading(false);
       return;
     }
 
     try {
-      const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
-
-      // Get both rewarded and refused tasks
-      let finishedTasks = [...(data.rewarded || []), ...(data.refused || [])];
+      // Build endpoint with optional timestamp for delta updates
+      let endpoint = `/tasks/${address}`;
+      if (!forceFullRefresh && lastRefreshTimestamp > 0) {
+        endpoint += `?since=${lastRefreshTimestamp}`;
+      }
       
-      // Mark tasks with their status
-      finishedTasks = finishedTasks.map((task: FinishedTask) => {
-        if (data.rewarded?.some((r: FinishedTask) => r.id === task.id)) {
-          return { ...task, status: 'rewarded' };
-        } else {
-          return { ...task, status: 'refused' };
-        }
-      });
+      const data = await apiService.get<TasksResponse>(endpoint);
+      
+      // Update timestamp for next refresh
+      setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+      
+      if (forceFullRefresh || lastRefreshTimestamp === 0) {
+        // Complete refresh - rebuild the array from scratch
+        let finishedTasks = [...(data.rewarded || []), ...(data.refused || [])];
+        
+        // Mark tasks with their status
+        finishedTasks = finishedTasks.map((task: FinishedTask) => {
+          if (data.rewarded?.some((r: FinishedTask) => r.id === task.id)) {
+            return { ...task, status: 'rewarded' };
+          } else {
+            return { ...task, status: 'refused' };
+          }
+        });
 
-      // Sort tasks by timestamp (extracted from task ID)
-      const parseTimestamp = (id: string): number => {
-        const tsStr = id.split('__')[0];
-        const isoTimestamp = tsStr.replace('_', 'T') + ":00";
-        return new Date(isoTimestamp).getTime();
-      };
+        // Sort tasks by timestamp
+        const parseTimestamp = (id: string): number => {
+          const tsStr = id.split('__')[0];
+          const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+          return new Date(isoTimestamp).getTime();
+        };
 
-      finishedTasks.sort((a: FinishedTask, b: FinishedTask) => parseTimestamp(b.id) - parseTimestamp(a.id));
-      setTasks(finishedTasks);
+        finishedTasks.sort((a: FinishedTask, b: FinishedTask) => parseTimestamp(b.id) - parseTimestamp(a.id));
+        setTasks(finishedTasks);
+      } else {
+        // Delta update - merge with existing tasks
+        setTasks(prevTasks => {
+          // Create a map from the current tasks for quick lookup
+          const taskMap = new Map(prevTasks.map(task => [task.id, task]));
+          
+          // Update with new rewarded tasks
+          if (data.rewarded) {
+            data.rewarded.forEach((task: FinishedTask) => {
+              taskMap.set(task.id, { ...task, status: 'rewarded' });
+            });
+          }
+          
+          // Update with new refused tasks
+          if (data.refused) {
+            data.refused.forEach((task: FinishedTask) => {
+              taskMap.set(task.id, { ...task, status: 'refused' });
+            });
+          }
+          
+          // Remove any tasks that were deleted
+          if (data.removed_task_ids) {
+            data.removed_task_ids.forEach((id: string) => {
+              taskMap.delete(id);
+            });
+          }
+          
+          // Convert back to array and sort
+          const updatedTasks = Array.from(taskMap.values());
+          const parseTimestamp = (id: string): number => {
+            const tsStr = id.split('__')[0];
+            const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+            return new Date(isoTimestamp).getTime();
+          };
+          
+          updatedTasks.sort((a: FinishedTask, b: FinishedTask) => 
+            parseTimestamp(b.id) - parseTimestamp(a.id)
+          );
+          
+          return updatedTasks;
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -69,18 +123,32 @@ const FinishedTasksPage = () => {
     }
   };
 
-  // Fetch tasks when component mounts
   useEffect(() => {
-    if (!isAuthenticated || !address) return;
-    fetchTasks();
+    if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log("Not starting rewards fetch - inactive account or not authenticated");
+      setLoading(false);
+      return;
+    }
 
-    // Add periodic refresh
-    const intervalId = setInterval(() => {
-      fetchTasks();
-    }, 30000); // 30 seconds
-
-    return () => clearInterval(intervalId);
-  }, [isAuthenticated, address]);
+    console.log(`Fetching rewards for current account: ${address}`);
+    fetchTasks(true);
+    
+    // Set up interval for periodic refreshes
+    const interval = setInterval(() => {
+      if (isCurrentAccount(address)) {
+        fetchTasks();
+      } else {
+        console.log(`Stopping rewards interval for inactive account: ${address}`);
+        clearInterval(interval);
+      }
+    }, 60000); // Every minute
+    
+    // Cleanup function
+    return () => {
+      console.log(`Cleaning up rewards refresh interval for: ${address}`);
+      clearInterval(interval);
+    };
+  }, [address, isAuthenticated]);
 
   // Filter tasks based on selected filter
   const filteredTasks = tasks.filter(task => {

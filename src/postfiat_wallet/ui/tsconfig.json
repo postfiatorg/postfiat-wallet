@@ -36,6 +36,10 @@
     "out/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "hooks/useTaskRefresh.ts",
+    "hooks/useTasks.ts",
+    "components/VerificationPage.tsx",
+    "services/DataService.ts"
   ]
 }

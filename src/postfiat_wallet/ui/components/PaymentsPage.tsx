@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
+'use client';
+
+import React, { useState, useContext, useEffect } from 'react';
+import { AuthContext, useAuthAccount } from '../context/AuthContext';
 import { PaymentModal } from './modals/PaymentModal';
 import { apiService } from '../services/apiService';
 
 // Add interfaces for API responses
 interface PaymentResponse {
   payments: Payment[];
+  removed_payment_ids?: string[]; // Support for tracking removed payments
 }
 
 interface Payment {
@@ -15,6 +18,7 @@ interface Payment {
   amount_xrp: number;
   amount_pft: number;
   hash: string;
+  id?: string; // Unique identifier for the payment
 }
 
 interface TransactionResponse {
@@ -23,7 +27,10 @@ interface TransactionResponse {
 }
 
 const PaymentsPage = () => {
-  const { address } = useContext(AuthContext);
+  // Replace direct context usage with our custom hook
+  const { isAuthenticated, address, isCurrentAccount } = useAuthAccount();
+  const { password } = useContext(AuthContext); // Only if password is needed
+  
   const [selectedToken, setSelectedToken] = useState('XRP');
   const [transactions, setTransactions] = useState<Payment[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,19 +45,70 @@ const PaymentsPage = () => {
 
   // Add loading state
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Add lastRefreshTimestamp for incremental updates
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
 
-  const fetchPayments = async () => {
-    if (!address) return;
+  const fetchPayments = async (forceFullRefresh = false) => {
+    if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log("Not fetching payments - inactive account or not authenticated");
+      setIsLoading(false);
+      return;
+    }
     
     setIsLoading(true);
     try {
-      const data = await apiService.get<PaymentResponse>(`/payments/${address}`);
+      // Build endpoint with optional since parameter for delta updates
+      let endpoint = `/payments/${address}`;
+      if (!forceFullRefresh && lastRefreshTimestamp > 0) {
+        endpoint += `?since=${lastRefreshTimestamp}`;
+      }
       
-      const sortedTransactions = data.payments.sort((a, b) => {
-        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-      });
+      const data = await apiService.get<PaymentResponse>(endpoint);
       
-      setTransactions(sortedTransactions);
+      // Update timestamp for next refresh
+      setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+      
+      if (forceFullRefresh || lastRefreshTimestamp === 0) {
+        // Initial load or forced refresh - replace all data
+        const sortedTransactions = data.payments.sort((a, b) => {
+          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+        });
+        
+        setTransactions(sortedTransactions);
+      } else {
+        // Delta update - merge with existing data
+        setTransactions(prevTransactions => {
+          // Create a map of existing transactions by hash for easy lookup
+          const txMap = new Map(prevTransactions.map(tx => [tx.hash, tx]));
+          
+          // Add or update new transactions
+          data.payments.forEach(payment => {
+            txMap.set(payment.hash, payment);
+          });
+          
+          // Handle removed payments if supported by the API
+          if (data.removed_payment_ids) {
+            data.removed_payment_ids.forEach(id => {
+              // Find and remove the payment with this id
+              for (const [hash, tx] of txMap.entries()) {
+                if (tx.id === id) {
+                  txMap.delete(hash);
+                  break;
+                }
+              }
+            });
+          }
+          
+          // Convert map back to array and sort
+          const updatedTransactions = Array.from(txMap.values());
+          updatedTransactions.sort((a, b) => {
+            return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+          });
+          
+          return updatedTransactions;
+        });
+      }
     } catch (error) {
       console.error('Error fetching payments:', error);
     } finally {
@@ -59,8 +117,34 @@ const PaymentsPage = () => {
   };
 
   useEffect(() => {
-    fetchPayments();
-  }, [address]);
+    // Start payment refresh loop when component mounts
+    if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log("Not starting payments fetch - inactive account or not authenticated");
+      setIsLoading(false);
+      return;
+    }
+    
+    console.log(`Starting payment fetch for current account: ${address}`);
+    
+    // Initial fetch (full refresh)
+    fetchPayments(true);
+    
+    // Set up interval for periodic refreshes using delta updates
+    const intervalId = setInterval(() => {
+      if (isCurrentAccount(address)) {
+        fetchPayments(false);
+      } else {
+        console.log(`Stopping payment interval for inactive account: ${address}`);
+        clearInterval(intervalId);
+      }
+    }, 30000); // Every 30 seconds
+    
+    // Clean up interval on unmount
+    return () => {
+      console.log(`Cleaning up payment refresh interval for: ${address}`);
+      clearInterval(intervalId);
+    };
+  }, [address, isAuthenticated]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,8 +182,8 @@ const PaymentsPage = () => {
       setMemo('');
       setStatus('success');
       
-      // Refresh transactions list
-      await fetchPayments();
+      // Force full refresh after making a payment
+      await fetchPayments(true);
     } catch (err: any) {
       setError(err.message);
       setStatus('error');

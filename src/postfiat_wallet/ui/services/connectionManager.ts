@@ -3,28 +3,27 @@ import { apiService } from './apiService';
 // Create a custom event for connection status changes
 export const CONNECTION_STATUS_CHANGED = 'connection_status_changed';
 
-class ConnectionManager {
-  private intervalId: number | null = null;
+export class ConnectionManager {
+  private intervalId: ReturnType<typeof setInterval> | null = null;
   private isConnected: boolean = true;
 
   // Start monitoring the connection status
-  startMonitoring(intervalMs: number = 5000) {
-    // Clear any existing interval
-    this.stopMonitoring();
+  startMonitoring(useAuthenticatedEndpoints = false) {
+    if (this.intervalId) return;
     
-    // Set up a new interval to check connection
-    this.intervalId = window.setInterval(() => {
-      this.checkConnection();
-    }, intervalMs);
+    // Initial check
+    this._checkServerConnectivity(useAuthenticatedEndpoints);
     
-    // Do an immediate check
-    this.checkConnection();
+    // Start periodic checking
+    this.intervalId = setInterval(() => {
+      this._checkServerConnectivity(useAuthenticatedEndpoints);
+    }, 5000);
   }
 
   // Stop monitoring the connection status
   stopMonitoring() {
     if (this.intervalId !== null) {
-      window.clearInterval(this.intervalId);
+      clearInterval(this.intervalId);
       this.intervalId = null;
     }
   }
@@ -74,6 +73,41 @@ class ConnectionManager {
   // Get current connection status
   getConnectionStatus(): boolean {
     return this.isConnected;
+  }
+
+  // New method that only checks server is running, not authenticated endpoints
+  async checkBasicConnectivity(): Promise<boolean> {
+    try {
+      // Use a lightweight public endpoint for the health check
+      const response = await fetch('/api/health', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      
+      return response.ok;
+    } catch (error) {
+      console.error('Server connectivity check failed:', error);
+      return false;
+    }
+  }
+
+  // Update check method to conditionally use basic or authenticated endpoints
+  private async _checkServerConnectivity(useAuthenticatedEndpoints: boolean): Promise<void> {
+    const isConnected = useAuthenticatedEndpoints 
+      ? await this.checkConnection()
+      : await this.checkBasicConnectivity();
+      
+    if (isConnected) {
+      if (!this.isConnected) {
+        this.isConnected = true;
+        this.dispatchConnectionEvent(true);
+      }
+    } else {
+      if (this.isConnected) {
+        this.isConnected = false;
+        this.dispatchConnectionEvent(false);
+      }
+    }
   }
 }
 

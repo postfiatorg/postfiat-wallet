@@ -2,7 +2,7 @@
 
 import React, { useState, useContext, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/custom-card';
-import { AuthContext } from '../context/AuthContext';
+import { useAuthAccount, AuthContext } from '../context/AuthContext';
 import AcceptTaskModal from './modals/AcceptTaskModal';
 import { RequestTaskModal } from './modals/RequestTaskModal';
 import RefuseTaskModal from './modals/RefuseTaskModal';
@@ -28,7 +28,8 @@ interface TasksResponse {
 }
 
 const ProposalsPage = () => {
-  const { isAuthenticated, address, username, password } = useContext(AuthContext);
+  const { isAuthenticated, address, isCurrentAccount } = useAuthAccount();
+  const { password } = useContext(AuthContext);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,10 +49,30 @@ const ProposalsPage = () => {
   const [modalError, setModalError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('all');
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
+
+  // Add this effect to clear tasks when address changes
+  useEffect(() => {
+    // Reset all state when the address changes
+    console.log("Address changed in ProposalsPage, resetting state:", address);
+    setTasks([]);
+    setError(null);
+    setLastRefreshTimestamp(0);
+    setExpandedTasks(new Set());
+    setActiveTab('all');
+    setShowRefused(false);
+    
+    // Force a full refresh with the new address
+    if (address) {
+      setLoading(true);
+      fetchTasks(true);
+    }
+  }, [address]); // Only run when address changes
 
   // Fetch tasks from the API
-  const fetchTasks = async () => {
-    if (!address) {
+  const fetchTasks = async (forceFullRefresh = false) => {
+    if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+      console.log("Not fetching tasks - inactive account or not authenticated");
       setLoading(false);
       return;
     }
@@ -62,26 +83,80 @@ const ProposalsPage = () => {
       // Add artificial delay for better UX
       await new Promise(resolve => setTimeout(resolve, 1000)); // Minimum 1 second refresh
       
-      const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
+      let endpoint = `/tasks/${address}`;
+      
+      // Add timestamp for delta updates if not forcing full refresh
+      if (!forceFullRefresh && lastRefreshTimestamp > 0) {
+        endpoint += `?since=${lastRefreshTimestamp}`;
+      }
+      
+      const data = await apiService.get<TasksResponse>(endpoint);
+      console.log("Received tasks data:", JSON.stringify(data, null, 2));
+      
+      // Record the current time as the last refresh timestamp
+      setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+      
+      if (forceFullRefresh || !lastRefreshTimestamp) {
+        // Full refresh - replace all tasks
+        let tasksToDisplay = [
+          ...data.requested || [],
+          ...data.proposed || [],
+          ...data.accepted || [],
+          ...data.challenged || [],
+          ...(showRefused ? data.refused || [] : [])
+        ];
 
-      // Combine tasks from allowed statuses
-      let tasksToDisplay = [
-        ...data.requested || [],
-        ...data.proposed || [],
-        ...data.accepted || [],
-        ...data.challenged || [],
-        ...(showRefused ? data.refused || [] : [])
-      ];
+        // Sort tasks by timestamp
+        const parseTimestamp = (id: string): number => {
+          const tsStr = id.split('__')[0];
+          const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+          return new Date(isoTimestamp).getTime();
+        };
 
-      // Sort tasks by timestamp (extracted from task ID)
-      const parseTimestamp = (id: string): number => {
-        const tsStr = id.split('__')[0];
-        const isoTimestamp = tsStr.replace('_', 'T') + ":00";
-        return new Date(isoTimestamp).getTime();
-      };
-
-      tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
-      setTasks(tasksToDisplay);
+        tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+        setTasks(tasksToDisplay);
+      } else {
+        // Delta update - merge with existing tasks
+        setTasks(prevTasks => {
+          // Create a map of existing tasks by ID for easy lookup
+          const taskMap = new Map(prevTasks.map(task => [task.id, task]));
+          
+          // Process each category and update the map
+          ['requested', 'proposed', 'accepted', 'challenged', 'refused'].forEach(category => {
+            if (!data[category]) return;
+            
+            data[category].forEach((task: any) => {
+              // Add or update task
+              taskMap.set(task.id, task);
+            });
+          });
+          
+          // If the update includes task removals, process them
+          if (data.removed_task_ids) {
+            data.removed_task_ids.forEach((id: string) => {
+              taskMap.delete(id);
+            });
+          }
+          
+          // Convert map back to array and sort
+          let updatedTasks = Array.from(taskMap.values());
+          
+          // Apply refused filter if needed
+          if (!showRefused) {
+            updatedTasks = updatedTasks.filter(task => task.status !== 'refused');
+          }
+          
+          // Sort tasks by timestamp
+          const parseTimestamp = (id: string): number => {
+            const tsStr = id.split('__')[0];
+            const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+            return new Date(isoTimestamp).getTime();
+          };
+          
+          updatedTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+          return updatedTasks;
+        });
+      }
     } catch (error) {
       console.error("Error fetching tasks:", error);
       // Instead of toast, set the error state
@@ -92,47 +167,79 @@ const ProposalsPage = () => {
     }
   };
 
-  // Start the refresh loop when the component mounts
+  // Effect for initial fetch and starting refresh loop
   useEffect(() => {
-    if (!isAuthenticated || !address) return;
+    let refreshLoopActive = false;
+    let refreshInterval: NodeJS.Timeout | null = null;
 
     const startRefreshLoop = async () => {
-      try {
-        await apiService.post(`/tasks/start-refresh/${address}`);
-        console.log("Started task refresh loop");
-      } catch (error) {
-        console.error("Failed to start refresh loop:", error);
+      if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+        console.log("Not starting refresh loop - inactive account or not authenticated");
+        setLoading(false);
+        return;
       }
+      
+      console.log(`Starting task refresh loop for account: ${address}`);
+      
+      // First, initialize tasks on the server
+      try {
+        await apiService.post(`/tasks/initialize/${address}`);
+        console.log("Tasks initialized successfully");
+        
+        // Start the server-side refresh loop
+        await apiService.post(`/tasks/start-refresh/${address}`);
+        console.log("Task refresh loop started on server");
+        refreshLoopActive = true;
+      } catch (err) {
+        console.error("Failed to initialize tasks:", err);
+        setError("Failed to initialize tasks. Please try again.");
+        setLoading(false);
+        return;
+      }
+      
+      // Fetch initial tasks
+      await fetchTasks(true);
+      
+      // Set up client-side refresh interval
+      refreshInterval = setInterval(() => {
+        if (isCurrentAccount(address)) {
+          fetchTasks();
+        } else {
+          console.log(`Stopping interval for inactive account: ${address}`);
+          if (refreshInterval) clearInterval(refreshInterval);
+        }
+      }, 60000); // Refresh every minute
     };
-
-    startRefreshLoop();
-    fetchTasks();
-
-    // Cleanup: stop the refresh loop when component unmounts
+    
+    if (address && isAuthenticated && isCurrentAccount(address)) {
+      startRefreshLoop();
+    } else {
+      setLoading(false);
+    }
+    
+    // Cleanup function
     return () => {
-      if (address) {
+      if (refreshInterval) {
+        console.log(`Clearing refresh interval for: ${address}`);
+        clearInterval(refreshInterval);
+      }
+      
+      if (address && refreshLoopActive) {
+        console.log(`Stopping server refresh loop for: ${address}`);
         apiService.post(`/tasks/stop-refresh/${address}`)
+          .then(() => {
+            console.log(`Successfully stopped refresh loop for: ${address}`);
+          })
           .catch(error => {
             console.error("Failed to stop refresh loop:", error);
           });
       }
     };
-  }, [isAuthenticated, address]);
+  }, [address, isAuthenticated]);
 
-  // Add periodic frontend refresh (every 30 seconds)
+  // Refetch when showRefused changes - need full refresh to ensure correct filtering
   useEffect(() => {
-    if (!isAuthenticated || !address) return;
-
-    const intervalId = setInterval(() => {
-      fetchTasks();
-    }, 30000); // 30 seconds
-
-    return () => clearInterval(intervalId);
-  }, [isAuthenticated, address]);
-
-  // Refetch when showRefused changes
-  useEffect(() => {
-    fetchTasks();
+    fetchTasks(true);
   }, [showRefused]);
 
   const toggleTaskExpansion = (taskId: string) => {
