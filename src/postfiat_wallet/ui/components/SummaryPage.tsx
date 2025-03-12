@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/custom-card';
-import { AuthContext } from '@/context/AuthContext';
+import { AuthContext, useAuthAccount } from '../context/AuthContext';
 import { apiService } from '../services/apiService';
 
 interface AccountSummary {
@@ -45,7 +45,8 @@ interface DecryptionResponse {
 }
 
 const SummaryPage = () => {
-  const { address } = useContext(AuthContext);
+  const { isAuthenticated, address, isCurrentAccount } = useAuthAccount();
+  const { password } = useContext(AuthContext);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +70,35 @@ const SummaryPage = () => {
     data: any;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Add this with other state variables
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
+
+  // Compute balanceInfo based on summary data
+  // This ensures balanceInfo is always defined even when summary is null
+  const balanceInfo = React.useMemo(() => {
+    if (!summary) {
+      return [
+        { label: 'XRP Balance', value: '0' },
+        { label: 'PFT Balance', value: '0' }
+      ];
+    }
+    
+    return [
+      { 
+        label: 'XRP Balance', 
+        value: typeof summary.xrp_balance === 'number' 
+          ? summary.xrp_balance.toFixed(6) 
+          : summary.xrp_balance 
+      },
+      { 
+        label: 'PFT Balance', 
+        value: typeof summary.pft_balance === 'number' 
+          ? summary.pft_balance.toFixed(2) 
+          : summary.pft_balance 
+      }
+    ];
+  }, [summary]);
 
   // Add a new function to decrypt the link
   const decryptDocumentLink = async (encryptedLink: string, password: string) => {
@@ -127,40 +157,170 @@ const SummaryPage = () => {
 
   useEffect(() => {
     const fetchSummary = async () => {
-      if (!address) {
-        console.log("No address available");
+      if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+        console.log("Not fetching summary - inactive account or not authenticated");
         setLoading(false);
         return;
       }
       
-      console.log("Fetching summary for address:", address);
       try {
+        setLoading(true);
         const data = await apiService.get<AccountSummary>(`/account/${address}/summary`);
-        console.log("Received summary:", data);
+        console.log("Received summary data:", data);
         setSummary(data);
       } catch (err) {
-        console.error("Fetch error:", err);
-        setError(err instanceof Error ? err.message : 'An error occurred');
+        console.error("Error fetching summary:", err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch account summary');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchSummary();
-  }, [address]);
+    // Only fetch if we have an authenticated address that is current
+    if (address && isAuthenticated && isCurrentAccount(address)) {
+      fetchSummary();
+    } else {
+      setLoading(false);
+    }
 
-  // Add effect to fetch account status
+    // No cleanup needed for this one-time fetch
+  }, [address, isAuthenticated]);
+
+  useEffect(() => {
+    const startRefreshLoop = async () => {
+      if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+        console.log("Not starting refresh loop - inactive account or not authenticated");
+        setLoadingTasks(false);
+        return;
+      }
+
+      console.log(`Starting task refresh for account: ${address}`);
+      
+      const fetchTasks = async () => {
+        // Skip if address is no longer current
+        if (!isCurrentAccount(address)) {
+          console.log(`Skipping task refresh for inactive account: ${address}`);
+          return;
+        }
+        
+        try {
+          setLoadingTasks(true);
+          
+          // Add the since parameter for delta updates
+          const endpoint = lastRefreshTimestamp 
+            ? `/tasks/${address}?since=${lastRefreshTimestamp}` 
+            : `/tasks/${address}`;
+          
+          const data = await apiService.get<TasksResponse>(endpoint);
+          
+          // Update timestamp for next refresh
+          setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+          
+          if (lastRefreshTimestamp === 0) {
+            // Initial load - set all tasks
+            const allTasks = [
+              ...(data.requested || []),
+              ...(data.proposed || []),
+              ...(data.accepted || []),
+              ...(data.challenged || []),
+              ...(data.completed || []),
+              ...(data.refused || [])
+            ];
+            
+            // Sort and limit
+            const parseTimestamp = (id: string): number => {
+              const tsStr = id.split('__')[0];
+              const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+              return new Date(isoTimestamp).getTime();
+            };
+            
+            allTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+            setTasks(allTasks.slice(0, 10));
+          } else {
+            // Delta update - merge with existing tasks
+            setTasks(prevTasks => {
+              // Create a map of existing tasks by ID
+              const taskMap = new Map(prevTasks.map(task => [task.id, task]));
+              
+              // Process each category and update the map
+              ['requested', 'proposed', 'accepted', 'challenged', 'completed', 'refused'].forEach(category => {
+                if (!data[category]) return;
+                
+                data[category].forEach((task: any) => {
+                  taskMap.set(task.id, task);
+                });
+              });
+              
+              // Handle removed tasks
+              if (data.removed_task_ids) {
+                data.removed_task_ids.forEach((id: string) => {
+                  taskMap.delete(id);
+                });
+              }
+              
+              // Convert back to array, sort and limit
+              const updatedTasks = Array.from(taskMap.values());
+              const parseTimestamp = (id: string): number => {
+                const tsStr = id.split('__')[0];
+                const isoTimestamp = tsStr.replace('_', 'T') + ":00";
+                return new Date(isoTimestamp).getTime();
+              };
+              
+              updatedTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+              return updatedTasks.slice(0, 10);
+            });
+          }
+          
+          setTasksError(null);
+        } catch (err) {
+          console.error("Error fetching tasks:", err);
+          setTasksError(err instanceof Error ? err.message : 'Failed to fetch tasks');
+        } finally {
+          setLoadingTasks(false);
+        }
+      };
+
+      // Initial fetch
+      await fetchTasks();
+
+      // Set up interval but store reference to clear it
+      const interval = setInterval(() => {
+        // Only fetch if this is still the current account
+        if (isCurrentAccount(address)) {
+          fetchTasks();
+        } else {
+          console.log(`Stopping interval for inactive account: ${address}`);
+          clearInterval(interval);
+        }
+      }, 30000);
+
+      // Clean up the interval on unmount or account change
+      return () => {
+        console.log(`Cleaning up task refresh interval for: ${address}`);
+        clearInterval(interval);
+      };
+    };
+
+    if (address && isAuthenticated && isCurrentAccount(address)) {
+      startRefreshLoop();
+    } else {
+      setLoadingTasks(false);
+    }
+  }, [address, isAuthenticated]);
+
   useEffect(() => {
     const fetchAccountStatus = async () => {
-      if (!address) {
-        console.log("No address available for status check");
+      if (!address || !isAuthenticated || !isCurrentAccount(address)) {
+        console.log("Not fetching account status - inactive account or not authenticated");
         setLoadingStatus(false);
         return;
       }
-      
-      console.log("Fetching account status for address:", address);
+
       try {
-        const data = await apiService.get<AccountStatus>(`/account/${address}/status?refresh=true`);
+        setLoadingStatus(true);
+        const data = await apiService.get<AccountStatus>(
+          `/account/${address}/status?refresh=true`
+        );
         console.log("Received account status data:", JSON.stringify(data, null, 2));
         setAccountStatus(data);
       } catch (err) {
@@ -170,75 +330,15 @@ const SummaryPage = () => {
       }
     };
 
-    fetchAccountStatus();
-  }, [address]);
-
-  useEffect(() => {
-    const startRefreshLoop = async () => {
-      if (!address) return;
-      
-      const fetchTasks = async () => {
-        try {
-          setLoadingTasks(true);
-          const data = await apiService.get<TasksResponse>(`/tasks/${address}`);
-          
-          // Combine tasks from all sections into a single array
-          const allTasks = [
-            ...(data.requested || []),
-            ...(data.proposed || []),
-            ...(data.accepted || []),
-            ...(data.challenged || []),
-            ...(data.completed || []),
-            ...(data.refused || [])
-          ];
-          
-          // Sort tasks by timestamp (extracted from task ID)
-          const parseTimestamp = (id: string): number => {
-            const tsStr = id.split('__')[0];
-            const isoTimestamp = tsStr.replace('_', 'T') + ":00";
-            return new Date(isoTimestamp).getTime();
-          };
-          
-          allTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
-          
-          // Take only the most recent tasks (up to 10)
-          setTasks(allTasks.slice(0, 10));
-          setTasksError(null);
-        } catch (err) {
-          console.error("Error fetching tasks:", err);
-          setTasksError(err instanceof Error ? err.message : 'Failed to fetch tasks');
-        } finally {
-          setLoadingTasks(false);
-        }
-      };
-      
-      // Initial fetch
-      await fetchTasks();
-      
-      // Set up interval for periodic refreshes
-      const intervalId = setInterval(fetchTasks, 30000); // Refresh every 30 seconds
-      
-      // Clean up interval on component unmount
-      return () => clearInterval(intervalId);
-    };
-    
-    startRefreshLoop();
-  }, [address]);
-
-  const balanceInfo = [
-    {
-      label: "XRP Balance",
-      value: (typeof summary?.xrp_balance === 'number'
-        ? summary.xrp_balance.toFixed(6) 
-        : parseFloat(summary?.xrp_balance || "0").toFixed(6))
-    },
-    {
-      label: "PFT Balance",
-      value: (typeof summary?.pft_balance === 'number'
-        ? summary.pft_balance.toFixed(1)
-        : parseFloat(summary?.pft_balance || "0").toFixed(1))
+    // Only fetch if we have an address that is current
+    if (address && isAuthenticated && isCurrentAccount(address)) {
+      fetchAccountStatus();
+    } else {
+      setLoadingStatus(false);
     }
-  ];
+
+    // No cleanup needed as this is a one-time fetch
+  }, [address, isAuthenticated]);
 
   const accountDetails = [
     {
