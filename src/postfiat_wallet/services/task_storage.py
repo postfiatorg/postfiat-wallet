@@ -11,6 +11,7 @@ import logging
 import asyncio
 import json
 from datetime import datetime
+import time
 
 from postfiat.nodes.task.constants import EARLIEST_LEDGER_SEQ, TASK_NODE_ADDRESS, REMEMBRANCER_ADDRESS
 from postfiat.nodes.task.codecs.v0.task import decode_account_txn
@@ -69,48 +70,59 @@ class TaskStorage:
         return first_ledger, -1
 
     async def initialize_user_tasks(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
-        """
-        Fetches all existing transactions/messages for the user from the earliest ledger
-        to the latest, updating the state.
-        """
-        logger.debug(f"Initializing state for {wallet_address}")
-
-        start_ledger = EARLIEST_LEDGER_SEQ
-        end_ledger = -1
-
-        newest_ledger_seen = None
-        message_count = 0
-
+        """Initialize task storage for a user by fetching all their historical transactions"""
+        # First ensure user is initialized
+        await self.initialize_user(wallet_address)
+        
+        logger.info(f"Initializing tasks for {wallet_address}")
+        
+        # Get client for this user
+        client = self._get_client(wallet_address)
+        if not client:
+            logger.error(f"No client found for {wallet_address}")
+            return
+        
+        # Check if we already have a last processed ledger for this wallet
+        start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+        
         try:
-            # Fetch transactions only once
-            txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            # Use get_account_txns instead - the client doesn't have get_account_info
+            # Just get the latest 1 transaction to determine current ledger
+            current_ledger = -1  # Default to latest ledger
+            txn_info_stream = client.get_account_txns(wallet_address, -1, -1, limit=1)
             
-            # Create a copy of the transaction stream for remembrancer decoder
-            remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            # Try to extract current ledger from the first transaction
+            async for txn in txn_info_stream:
+                if hasattr(txn, 'ledger_index') and txn.ledger_index:
+                    current_ledger = txn.ledger_index
+                    break
             
-            # Decode the transactions using both decoders and combine the streams
-            combined_stream = combine_streams(
-                decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, user_account=user_wallet),
-                decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS, user_account=user_wallet)
+            if current_ledger == -1:
+                # If we couldn't determine current ledger, use a reasonable default
+                # 1 day's worth of ledgers (at ~3.5 sec per ledger) from the last known point
+                current_ledger = start_ledger + 24000  # ~24 hours of ledgers
+                logger.info(f"Could not determine current ledger for {wallet_address}, using estimate: {current_ledger}")
+        except Exception as e:
+            logger.warning(f"Error getting account info for {wallet_address}: {str(e)}")
+            # Use a reasonable default - just process from last point + 1 day worth of ledgers
+            current_ledger = start_ledger + 24000
+        
+        # Only process if there are new transactions
+        if start_ledger < current_ledger:
+            # Get transaction stream and decode
+            txn_stream = client.get_account_txns(
+                wallet_address, 
+                start_ledger, 
+                current_ledger
             )
             
-            async for msg in combined_stream:
-                self._state.update(msg)
-                newest_ledger_seen = msg.ledger_seq
-                message_count += 1
-
-            # Store the last processed ledger
-            if newest_ledger_seen is not None:
-                self._last_processed_ledger[wallet_address] = newest_ledger_seen
-                logger.debug(f"Processed {message_count} messages, newest ledger: {newest_ledger_seen}")
-            else:
-                # If no messages found, at least set them to the earliest ledger
-                self._last_processed_ledger[wallet_address] = start_ledger
-                logger.debug("No messages found during initialization")
-
-        except Exception as e:
-            logger.error(f"Error during initialization: {str(e)}", exc_info=True)
-            raise
+            # Process the transactions
+            await self._decode_and_store_transactions(wallet_address, txn_stream, user_wallet)
+            
+            # Update the last processed ledger
+            self._last_processed_ledger[wallet_address] = current_ledger
+        
+        logger.info(f"Initialized tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
 
     async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
         """
@@ -478,5 +490,62 @@ class TaskStorage:
         messages.sort(key=lambda x: x["timestamp"])
         
         return messages
+    
+    async def initialize_recent_tasks(self, wallet_address: str, since_timestamp: int, user_wallet: Optional[Wallet] = None) -> None:
+        """
+        Initialize only recent tasks for a user based on a timestamp
+        This is more efficient for UI refreshes that only need recent data
+        """
+        logger.info(f"Initializing recent tasks for {wallet_address} since {since_timestamp}")
+        
+        # Ensure user is initialized
+        await self.initialize_user(wallet_address)
+        
+        # Convert timestamp to an approximate ledger index
+        # This is an estimation - 3.5 seconds per ledger on average
+        seconds_since = int(time.time()) - since_timestamp
+        ledgers_since = max(1, int(seconds_since / 3.5))
+        
+        try:
+            # Use get_account_txns instead of get_account_info
+            current_ledger = -1  # Default to latest ledger
+            txn_info_stream = self._get_client(wallet_address).get_account_txns(
+                wallet_address, -1, -1, limit=1
+            )
+            
+            # Try to extract current ledger from the first transaction
+            async for txn in txn_info_stream:
+                if hasattr(txn, 'ledger_index') and txn.ledger_index:
+                    current_ledger = txn.ledger_index
+                    break
+            
+            if current_ledger == -1:
+                # If we couldn't determine current ledger, use a reasonable default from last known
+                last_known = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+                current_ledger = last_known + 24000  # ~24 hours of ledgers
+                logger.info(f"Could not determine current ledger for {wallet_address}, using estimate: {current_ledger}")
+        except Exception as e:
+            logger.warning(f"Error getting account info for {wallet_address}: {str(e)}")
+            # Use last known ledger + estimation
+            last_known = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+            current_ledger = last_known + ledgers_since
+        
+        # Calculate start ledger (don't go too far back)
+        start_ledger = max(EARLIEST_LEDGER_SEQ, current_ledger - ledgers_since)
+        
+        # Get transaction stream and decode
+        txn_stream = self._get_client(wallet_address).get_account_txns(
+            wallet_address, 
+            start_ledger, 
+            current_ledger
+        )
+        
+        # Process the transactions
+        await self._decode_and_store_transactions(wallet_address, txn_stream, user_wallet)
+        
+        # Update the last processed ledger
+        self._last_processed_ledger[wallet_address] = current_ledger
+        
+        logger.info(f"Initialized recent tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
     
 
