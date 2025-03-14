@@ -359,7 +359,7 @@ const SummaryPage = () => {
     ...(accountStatus?.init_rite_statement ? [{
       label: "Initiation Rite",
       value: `"${accountStatus.init_rite_statement}"`,
-      className: "italic"
+      className: "italic text-white"
     }] : []),
     // Then show initiation status
     {
