@@ -22,6 +22,12 @@ interface StatusResponse {
   // Add other fields as needed
 }
 
+// Add a balance response interface
+interface BalanceResponse {
+  xrp: string;
+  pft: string;
+}
+
 export default function Home() {
   const [activePage, setActivePage] = useState('summary');
   const [auth, setAuth] = useState<AuthState>({
@@ -33,6 +39,8 @@ export default function Home() {
   const [initStatus, setInitStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
+  // Add state for user balance
+  const [userBalance, setUserBalance] = useState<{xrp: string, pft: string} | null>(null);
 
   // Setup connection monitoring with basic check only
   useEffect(() => {
@@ -122,6 +130,25 @@ export default function Home() {
       return () => clearInterval(intervalId);
     } else {
       setIsLoading(false);
+    }
+  }, [auth.isAuthenticated, auth.address, isServerAvailable]);
+
+  // Add an effect to fetch user balance
+  useEffect(() => {
+    const fetchUserBalance = async () => {
+      if (!auth.address || !auth.isAuthenticated || !isServerAvailable) return;
+      
+      try {
+        const data = await apiService.get<BalanceResponse>(`/balance/${auth.address}`);
+        setUserBalance(data);
+        console.log('User balance:', data);
+      } catch (error) {
+        console.error('Error fetching user balance:', error);
+      }
+    };
+
+    if (auth.isAuthenticated && isServerAvailable) {
+      fetchUserBalance();
     }
   }, [auth.isAuthenticated, auth.address, isServerAvailable]);
 
@@ -238,13 +265,14 @@ export default function Home() {
     return <div>Loading...</div>;
   }
 
-  // Show onboarding UI if not initiated or status is pending
+  // Update the onboarding check logic
   if (initStatus) {
-    // Only show onboarding for these specific statuses
+    // Only show onboarding for these specific statuses AND if user has no PFT
     const needsOnboarding = ['UNSTARTED', 'PENDING_INITIATION', 'PENDING'].includes(initStatus);
+    const hasPft = userBalance && parseFloat(userBalance.pft) > 0;
     
-    // Don't show onboarding for COMPLETE status
-    if (needsOnboarding) {
+    // Skip onboarding if user has PFT, regardless of status
+    if (needsOnboarding && !hasPft) {
       return (
         <AuthProvider value={auth} onClearAuth={handleSignOut}>
           <Onboarding
