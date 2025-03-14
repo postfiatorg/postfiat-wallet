@@ -9,7 +9,10 @@ export class ConnectionManager {
 
   // Start monitoring the connection status
   startMonitoring(useAuthenticatedEndpoints = false) {
-    if (this.intervalId) return;
+    if (this.intervalId) {
+      // Clear existing interval if we're changing monitoring type
+      this.stopMonitoring();
+    }
     
     // Initial check
     this._checkServerConnectivity(useAuthenticatedEndpoints);
@@ -18,6 +21,8 @@ export class ConnectionManager {
     this.intervalId = setInterval(() => {
       this._checkServerConnectivity(useAuthenticatedEndpoints);
     }, 5000);
+    
+    console.log(`Connection monitoring started (using ${useAuthenticatedEndpoints ? 'authenticated' : 'basic'} endpoints)`);
   }
 
   // Stop monitoring the connection status
@@ -25,36 +30,52 @@ export class ConnectionManager {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+      console.log('Connection monitoring stopped');
     }
   }
 
-  // Check if the backend is available
-  private async checkConnection() {
+  // Check if the backend is available using apiService
+  private async checkConnection(): Promise<boolean> {
     try {
-      // Use a simple health check endpoint - adjust according to your API
-      await apiService.get('/health');
+      // Use a simple health check endpoint
+      const response = await apiService.get('/health');
       
-      // If we get here, the connection is up
-      if (!this.isConnected) {
-        this.isConnected = true;
-        this.dispatchConnectionEvent(true);
+      // Type-safe check for response structure
+      const isHealthy = response && typeof response === 'object' && 
+                        'status' in response && response.status === 'ok';
+      
+      // Update state and dispatch event if needed
+      if (isHealthy) {
+        if (!this.isConnected) {
+          this.isConnected = true;
+          this.dispatchConnectionEvent(true);
+        }
+        return true;
+      } else {
+        if (this.isConnected) {
+          this.isConnected = false;
+          this.dispatchConnectionEvent(false);
+        }
+        return false;
       }
     } catch (error) {
-      // If we get here, the connection is down
+      console.error('Connection check failed:', error);
+      // Only update if status changed
       if (this.isConnected) {
         this.isConnected = false;
         this.dispatchConnectionEvent(false);
       }
+      return false;
     }
   }
 
   // Manually trigger a connection check and return the result
   async manualCheck(): Promise<boolean> {
     try {
-      await apiService.get('/health');
-      this.isConnected = true;
-      this.dispatchConnectionEvent(true);
-      return true;
+      const result = await this.checkBasicConnectivity();
+      this.isConnected = result;
+      this.dispatchConnectionEvent(result);
+      return result;
     } catch (error) {
       this.isConnected = false;
       this.dispatchConnectionEvent(false);
@@ -64,6 +85,7 @@ export class ConnectionManager {
 
   // Dispatch custom event with connection status
   private dispatchConnectionEvent(isConnected: boolean) {
+    console.log(`Connection status changed: ${isConnected ? 'connected' : 'disconnected'}`);
     const event = new CustomEvent(CONNECTION_STATUS_CHANGED, { 
       detail: { isConnected } 
     });
@@ -75,7 +97,7 @@ export class ConnectionManager {
     return this.isConnected;
   }
 
-  // New method that only checks server is running, not authenticated endpoints
+  // Method that checks server is running using direct fetch
   async checkBasicConnectivity(): Promise<boolean> {
     try {
       // Use a lightweight public endpoint for the health check
@@ -84,7 +106,13 @@ export class ConnectionManager {
         headers: { 'Content-Type': 'application/json' },
       });
       
-      return response.ok;
+      // Additional check to validate the response
+      if (response.ok) {
+        const data = await response.json();
+        return data && data.status === 'ok';
+      }
+      
+      return false;
     } catch (error) {
       console.error('Server connectivity check failed:', error);
       return false;
@@ -93,16 +121,16 @@ export class ConnectionManager {
 
   // Update check method to conditionally use basic or authenticated endpoints
   private async _checkServerConnectivity(useAuthenticatedEndpoints: boolean): Promise<void> {
-    const isConnected = useAuthenticatedEndpoints 
-      ? await this.checkConnection()
-      : await this.checkBasicConnectivity();
+    try {
+      // Always use the reliable basic connectivity check regardless of authentication status
+      const isConnected = await this.checkBasicConnectivity();
       
-    if (isConnected) {
-      if (!this.isConnected) {
-        this.isConnected = true;
-        this.dispatchConnectionEvent(true);
+      if (isConnected !== this.isConnected) {
+        this.isConnected = isConnected;
+        this.dispatchConnectionEvent(isConnected);
       }
-    } else {
+    } catch (error) {
+      console.error('Error in connectivity check:', error);
       if (this.isConnected) {
         this.isConnected = false;
         this.dispatchConnectionEvent(false);

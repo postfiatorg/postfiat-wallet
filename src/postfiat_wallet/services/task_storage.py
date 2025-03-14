@@ -10,7 +10,7 @@ from pathlib import Path
 import logging
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import random
 
@@ -23,58 +23,58 @@ logger = logging.getLogger(__name__)
 
 class TaskStorage:
     """
-    TaskStorage manages RPC clients and state for user accounts.
-    Each authenticated user gets their own RPC client and state.
+    TaskStorage manages state for user accounts, using a shared RPC client for efficiency.
+    Each user gets their own state but shares the caching infrastructure.
     """
 
     def __init__(self):
-        """Initialize with empty collections for per-user data"""
-        # Per-user RPC clients
-        self._clients = {}
-        
-        # Per-user state
-        self._user_states = {}
-        
-        # Per-user tracking data
-        self._last_processed_ledger = {}
-        self._refresh_tasks = {}
-        
-        # Track update timestamps per task
-        self._task_update_timestamps = {}
-        
-        # Prepare cache directory path
-        self._cache_dir = Path(settings.PATHS["cache_dir"]) / "tasknode"
-        logger.debug(f"TaskNode cache location: {self._cache_dir.resolve()}")
+        """Initialize with a shared client and per-user state tracking"""
+        # Prepare local caching directory
+        cache_dir = Path(settings.PATHS["cache_dir"]) / "tasknode"
+        logger.debug(f"TaskNode cache location: {cache_dir.resolve()}")
 
-    def _get_client(self, wallet_address: str) -> Optional[CachingRpcClient]:
-        """Get RPC client for a user, return None if not initialized"""
-        return self._clients.get(wallet_address)
-
-    def _get_state(self, wallet_address: str) -> Optional[UserState]:
-        """Get user state, return None if not initialized"""
-        return self._user_states.get(wallet_address)
-
-    async def initialize_user(self, wallet_address: str) -> None:
-        """Initialize client and state for a new user"""
-        logger.info(f"Initializing user: {wallet_address}")
+        # A single shared client that fetches & caches XRPL transactions
+        self.client = CachingRpcClient(
+            endpoint="https://xrpl.postfiat.org:6007",
+            cache_dir=str(cache_dir)
+        )
         
-        # Create a client for this user if it doesn't exist
-        if wallet_address not in self._clients:
-            # Create client with separate cache subdirectory for this user
-            user_cache_dir = self._cache_dir / wallet_address
-            user_cache_dir.mkdir(parents=True, exist_ok=True)
-            
-            self._clients[wallet_address] = CachingRpcClient(
-                endpoint="https://xrpl.postfiat.org:6007",
-                cache_dir=str(user_cache_dir)
-            )
-            
-            # Create state for this user
+        # Per-user state tracking
+        self._user_states: Dict[str, UserState] = {}
+        self._last_processed_ledger: Dict[str, int] = {}
+        self._refresh_tasks: Dict[str, asyncio.Task] = {}
+        self._last_access_time: Dict[str, datetime] = {}
+        
+        # Default TTL for inactive users (2 hours)
+        self._user_ttl = timedelta(hours=2)
+        
+        # Task update timestamps
+        self._task_update_timestamps: Dict[str, Dict[str, float]] = {}
+
+    async def _cleanup_inactive_users(self):
+        """Clean up resources for users who haven't been active recently"""
+        now = datetime.now()
+        addresses_to_cleanup = []
+        
+        for wallet_address, last_access in self._last_access_time.items():
+            if now - last_access > self._user_ttl:
+                addresses_to_cleanup.append(wallet_address)
+        
+        for address in addresses_to_cleanup:
+            logger.info(f"Cleaning up inactive user: {address}")
+            self.clear_user_state(address)
+
+    def _get_state(self, wallet_address: str) -> UserState:
+        """Get or create user state"""
+        # Update access time for TTL
+        self._last_access_time[wallet_address] = datetime.now()
+        
+        # Create state if it doesn't exist
+        if wallet_address not in self._user_states:
             self._user_states[wallet_address] = UserState()
-            
-            # Initialize other tracking data
-            self._last_processed_ledger[wallet_address] = EARLIEST_LEDGER_SEQ
             self._task_update_timestamps[wallet_address] = {}
+            
+        return self._user_states[wallet_address]
 
     async def get_ledger_range(self, wallet_address: str) -> tuple[int, int]:
         """
@@ -86,57 +86,47 @@ class TaskStorage:
 
     async def initialize_user_tasks(self, wallet_address: str, user_wallet: Optional[Wallet] = None) -> None:
         """Initialize task storage for a user by fetching all their historical transactions"""
-        # First ensure user is initialized
-        await self.initialize_user(wallet_address)
-        
         logger.info(f"Initializing tasks for {wallet_address}")
         
-        # Get client for this user
-        client = self._get_client(wallet_address)
-        if not client:
-            logger.error(f"No client found for {wallet_address}")
-            return
-        
-        # Check if we already have a last processed ledger for this wallet
         start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+        end_ledger = -1  # Latest
+        
+        newest_ledger_seen = None
+        message_count = 0
+        state = self._get_state(wallet_address)
         
         try:
-            # Use get_account_txns without the limit parameter
-            current_ledger = -1  # Default to latest ledger
-            txn_info_stream = client.get_account_txns(wallet_address, -1, -1)
+            # Fetch transaction streams (one for each decoder)
+            txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
+            remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger, end_ledger)
             
-            # Try to extract current ledger from the first transaction
-            async for txn in txn_info_stream:
-                if hasattr(txn, 'ledger_index') and txn.ledger_index:
-                    current_ledger = txn.ledger_index
-                    break
-            
-            if current_ledger == -1:
-                # If we couldn't determine current ledger, use a reasonable default
-                # 1 day's worth of ledgers (at ~3.5 sec per ledger) from the last known point
-                current_ledger = start_ledger + 24000  # ~24 hours of ledgers
-                logger.info(f"Could not determine current ledger for {wallet_address}, using estimate: {current_ledger}")
-        except Exception as e:
-            logger.warning(f"Error getting account info for {wallet_address}: {str(e)}")
-            # Use a reasonable default - just process from last point + 1 day worth of ledgers
-            current_ledger = start_ledger + 24000
-        
-        # Only process if there are new transactions
-        if start_ledger < current_ledger:
-            # Get transaction stream and decode
-            txn_stream = client.get_account_txns(
-                wallet_address, 
-                start_ledger, 
-                current_ledger
+            # Combine both streams for efficiency
+            combined_stream = combine_streams(
+                decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, user_account=user_wallet),
+                decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS, user_account=user_wallet)
             )
             
-            # Process the transactions
-            await self._decode_and_store_transactions(wallet_address, txn_stream, user_wallet)
-            
+            # Process all messages
+            async for msg in combined_stream:
+                state.update(msg)
+                newest_ledger_seen = msg.ledger_seq
+                message_count += 1
+                
+                # Track task-specific updates
+                if hasattr(msg, 'task_id') and msg.task_id:
+                    self._task_update_timestamps[wallet_address][msg.task_id] = time.time()
+
             # Update the last processed ledger
-            self._last_processed_ledger[wallet_address] = current_ledger
-        
-        logger.info(f"Initialized tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
+            if newest_ledger_seen is not None:
+                self._last_processed_ledger[wallet_address] = newest_ledger_seen
+                logger.debug(f"Processed {message_count} messages, newest ledger: {newest_ledger_seen}")
+            else:
+                self._last_processed_ledger[wallet_address] = start_ledger
+                logger.debug("No messages found during initialization")
+                
+        except Exception as e:
+            logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+            raise
 
     async def start_refresh_loop(self, wallet_address: str, user_wallet: Optional[Wallet] = None):
         """Start a background task to periodically refresh tasks for this user"""
@@ -149,162 +139,179 @@ class TaskStorage:
         async def refresh_task():
             # Track consecutive errors for backoff
             consecutive_errors = 0
-            # Start with a longer initial delay to let UI load first
+            # Start with a delay to let UI load first
             initial_delay = True
             
             while True:
                 try:
                     if initial_delay:
-                        # Give UI time to load before starting polling
+                        # Give UI time to load before polling
                         await asyncio.sleep(10)
                         initial_delay = False
                     
-                    # Calculate adaptive delay based on activity
-                    # Start with 10s base polling interval
+                    # Calculate adaptive delay based on activity and errors
                     if consecutive_errors == 0:
-                        base_delay = 10
+                        base_delay = 10  # 10s with no errors
                     else:
-                        # Use exponential backoff for errors
+                        # Use exponential backoff for errors (max 60s)
                         base_delay = min(10 * (2 ** consecutive_errors), 60)
                     
-                    # Get last processed ledger or use earliest
-                    last_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+                    # Get last processed ledger
+                    start_ledger = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
+                    end_ledger = -1  # Latest
                     
-                    # Only log on first poll or errors
-                    if consecutive_errors == 0 and last_ledger == EARLIEST_LEDGER_SEQ:
-                        logger.debug(f"Starting initial refresh for {wallet_address}")
-                    elif consecutive_errors > 0:
-                        logger.debug(f"Retrying refresh for {wallet_address} after error")
+                    # Process new transactions
+                    state = self._get_state(wallet_address)
+                    new_updates = 0
                     
-                    # Process new transactions since last update
-                    new_updates = await self._process_new_transactions(wallet_address, last_ledger)
+                    # Get transaction streams
+                    txn_stream = self.client.get_account_txns(wallet_address, start_ledger + 1, end_ledger)
+                    remembrancer_txn_stream = self.client.get_account_txns(wallet_address, start_ledger + 1, end_ledger)
                     
-                    # Use adaptive polling - longer when inactive
-                    if new_updates:
+                    # Combine streams for processing
+                    combined_stream = combine_streams(
+                        decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, user_account=user_wallet),
+                        decode_remembrancer_stream(remembrancer_txn_stream, node_account=REMEMBRANCER_ADDRESS, user_account=user_wallet)
+                    )
+                    
+                    async for msg in combined_stream:
+                        state.update(msg)
+                        self._last_processed_ledger[wallet_address] = msg.ledger_seq
+                        new_updates += 1
+                        
+                        # Track task-specific updates
+                        if hasattr(msg, 'task_id') and msg.task_id:
+                            self._task_update_timestamps[wallet_address][msg.task_id] = time.time()
+                    
+                    # Reset error counter on successful update
+                    if new_updates > 0:
                         consecutive_errors = 0
-                        # Activity detected - poll more frequently
-                        await asyncio.sleep(10)  # 10s with activity
+                        # Activity detected - shorter polling interval
+                        await asyncio.sleep(10)
                     else:
-                        # No activity - gradually increase polling interval
-                        consecutive_errors = min(consecutive_errors + 0.2, 3)  # Cap at ~40s
+                        # Periodically clean up inactive users
+                        if random.random() < 0.1:  # 10% chance each poll
+                            await self._cleanup_inactive_users()
+                        
+                        # Adaptive polling - longer when inactive
                         await asyncio.sleep(base_delay)
-                    
+                        
                 except asyncio.CancelledError:
-                    logger.info(f"Refresh task for {wallet_address} was cancelled")
+                    logger.info(f"Refresh task cancelled for {wallet_address}")
                     break
                 except Exception as e:
-                    consecutive_errors += 1
                     logger.error(f"Error in refresh task for {wallet_address}: {str(e)}", exc_info=True)
-                    # Longer delay after errors
+                    consecutive_errors += 1
+                    # Sleep with backoff to avoid thrashing
                     await asyncio.sleep(base_delay)
         
-        # Start the refresh task and store it
-        refresh_coro = refresh_task()
-        self._refresh_tasks[wallet_address] = asyncio.create_task(refresh_coro)
+        # Start the refresh loop
+        self._refresh_tasks[wallet_address] = asyncio.create_task(refresh_task())
 
     def stop_refresh_loop(self, wallet_address: str) -> None:
-        """
-        Stops the background refresh loop for the specified wallet address if it exists.
-        """
-        logger.debug(f"Stopping refresh loop for {wallet_address}")
-        if wallet_address in self._refresh_tasks:
+        """Stop the background refresh loop for a user"""
+        if wallet_address in self._refresh_tasks and not self._refresh_tasks[wallet_address].done():
+            logger.info(f"Stopping refresh task for {wallet_address}")
             self._refresh_tasks[wallet_address].cancel()
-            del self._refresh_tasks[wallet_address]
+
+    def clear_user_state(self, wallet_address: str) -> None:
+        """Clear all state related to a specific wallet address"""
+        logger.info(f"Clearing state for {wallet_address}")
+        
+        # Stop any refresh task
+        self.stop_refresh_loop(wallet_address)
+        
+        # Remove all user data
+        if wallet_address in self._user_states:
+            del self._user_states[wallet_address]
+        
+        if wallet_address in self._last_processed_ledger:
+            del self._last_processed_ledger[wallet_address]
+            
+        if wallet_address in self._last_access_time:
+            del self._last_access_time[wallet_address]
+            
+        if wallet_address in self._task_update_timestamps:
+            del self._task_update_timestamps[wallet_address]
 
     async def get_tasks_by_state(
         self,
         wallet_address: str,
-        status: Optional[TaskStatus] = None,
-        since: Optional[int] = None
+        status: Optional[TaskStatus] = None
     ) -> List[dict]:
-        """
-        Get all tasks for a user account, optionally filtered by status.
-        If 'since' is provided, only return tasks updated since that timestamp.
-        """
-        logger.debug(f"Getting tasks by state for {wallet_address} (status filter: {status})")
+        """Get tasks for a user, optionally filtered by status"""
+        logger.debug(f"Getting tasks for {wallet_address} with status filter: {status}")
         
-        # Ensure we have initialized state
-        if not self._get_state(wallet_address) or wallet_address not in self._last_processed_ledger:
-            logger.debug(f"State not initialized for {wallet_address}, initializing now")
+        # Make sure state is initialized
+        if wallet_address not in self._user_states:
             await self.initialize_user_tasks(wallet_address)
         
-        # Grab the user's in-memory AccountState
-        account_state = self._get_state(wallet_address)
-        if not account_state: 
-            logger.debug(f"No AccountState found for {wallet_address} after initialization")
-            return []
-
-        # Log the available tasks
-        logger.debug(f"Found {len(account_state.tasks)} tasks in account state")
+        # Mark as accessed
+        self._last_access_time[wallet_address] = datetime.now()
         
-        # Filter tasks if a status is specified
+        # Get account state
+        state = self._get_state(wallet_address)
+        if not state.node_account:
+            return []
+            
+        account_state = state.node_account
+        
+        # Filter and format tasks
         tasks = []
         for task_id, tstate in account_state.tasks.items():
             if status is None or tstate.status == status:
-                # Handle message history with updated SDK structure
+                # Format message history
                 message_history = []
-                
-                # Check first message to understand format
-                if tstate.message_history and len(tstate.message_history) > 0:
-                    sample_msg = tstate.message_history[0]
-                    
-                    # Log structure of the message history item for debugging
-                    if len(tasks) == 0:  # Only log for first task
-                        logger.debug(f"Message history item type: {type(sample_msg)}")
-                        if hasattr(sample_msg, 'timestamp'):
-                            logger.debug(f"Sample message timestamp: {sample_msg.timestamp}")
-                        if hasattr(sample_msg, 'direction'):
-                            logger.debug(f"Sample message direction: {sample_msg.direction}")
-                        if hasattr(sample_msg, 'raw_data'):
-                            logger.debug(f"Sample message has raw_data attribute")
-                
-                # Process all messages in the history
-                for msg_item in tstate.message_history:
-                    try:
-                        # New SDK format (each message_history item is a tuple of (timestamp, direction, raw_data))
-                        if isinstance(msg_item, tuple):
-                            if len(msg_item) == 3:  # New format: (timestamp, direction, raw_data)
-                                timestamp, direction, raw_data = msg_item
+                if tstate.message_history:
+                    for msg_item in tstate.message_history:
+                        try:
+                            # Support tuple format (timestamp, direction, raw_data)
+                            if isinstance(msg_item, tuple):
+                                if len(msg_item) == 3:
+                                    timestamp, direction, raw_data = msg_item
+                                    message_history.append({
+                                        "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+                                        "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
+                                        "data": raw_data
+                                    })
+                                elif len(msg_item) == 2:
+                                    direction, data = msg_item
+                                    message_history.append({
+                                        "timestamp": None,
+                                        "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
+                                        "data": data
+                                    })
+                            # Support object format
+                            elif hasattr(msg_item, "direction") and (hasattr(msg_item, "raw_data") or hasattr(msg_item, "data")):
+                                direction = msg_item.direction
+                                data = getattr(msg_item, "raw_data", None) or getattr(msg_item, "data", "")
+                                timestamp = getattr(msg_item, "timestamp", None)
+                                
                                 message_history.append({
-                                    "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
-                                    "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
-                                    "data": raw_data
-                                })
-                            elif len(msg_item) == 2:  # Old format: (direction, data)
-                                direction, data = msg_item
-                                message_history.append({
-                                    "timestamp": None,
+                                    "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else 
+                                                (str(timestamp) if timestamp else None),
                                     "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
                                     "data": data
                                 })
-                        # Object-based format
-                        elif hasattr(msg_item, "direction") and (hasattr(msg_item, "raw_data") or hasattr(msg_item, "data")):
-                            direction = msg_item.direction
-                            data = getattr(msg_item, "raw_data", None) or getattr(msg_item, "data", "")
-                            timestamp = getattr(msg_item, "timestamp", None)
-                            
-                            message_history.append({
-                                "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else 
-                                            (str(timestamp) if timestamp else None),
-                                "direction": direction.name.lower() if hasattr(direction, "name") else str(direction),
-                                "data": data
-                            })
-                        else:
-                            # Fallback for unknown formats
+                            else:
+                                # Fallback
+                                message_history.append({
+                                    "timestamp": None,
+                                    "direction": "unknown",
+                                    "data": str(msg_item)
+                                })
+                        except Exception as e:
+                            logger.error(f"Error processing message: {e}")
                             message_history.append({
                                 "timestamp": None,
-                                "direction": "unknown",
-                                "data": str(msg_item)
+                                "direction": "error",
+                                "data": f"Error: {str(e)}"
                             })
-                    except Exception as e:
-                        logger.error(f"Error processing message history item: {e}", exc_info=True)
-                        message_history.append({
-                            "timestamp": None,
-                            "direction": "error",
-                            "data": f"Error processing message item: {str(e)}"
-                        })
                 
-                # Build the task object
+                # Get update timestamp if available
+                update_timestamp = self._task_update_timestamps.get(wallet_address, {}).get(task_id, 0)
+                
+                # Format task data
                 task_dict = {
                     "id": task_id,
                     "status": tstate.status.name.lower(),
@@ -316,130 +323,25 @@ class TaskStorage:
                     "completion_statement": tstate.completion_statement,
                     "challenge_statement": tstate.challenge_statement,
                     "challenge_response": tstate.challenge_response,
-                    "timestamp": None,  # Legacy field
+                    "last_updated": update_timestamp,
                 }
                 
                 tasks.append(task_dict)
-
-        # After the tasks list is populated but before returning:
-        if since is not None:
-            # Filter to only tasks that have been updated since the provided timestamp
-            filtered_tasks = []
-            for task in tasks:
-                task_id = task["id"]
-                # Get the latest update timestamp for this task
-                task_ts = self._task_update_timestamps.get(wallet_address, {}).get(task_id, 0)
-                if task_ts > since:
-                    filtered_tasks.append(task)
-            
-            tasks = filtered_tasks
-        
-        # Before returning, update all task timestamps to current time
-        current_time = time.time()
-        if wallet_address not in self._task_update_timestamps:
-            self._task_update_timestamps[wallet_address] = {}
-        
-        for task in tasks:
-            self._task_update_timestamps[wallet_address][task["id"]] = current_time
         
         return tasks
 
-    async def get_tasks_by_ui_section(self, wallet_address: str, since: Optional[int] = None) -> Dict[str, List[dict]]:
-        """
-        Organize tasks from the in-memory state into their respective status sections.
-        If 'since' is provided, only return sections with tasks updated since that timestamp.
-        """
-        # Fetch all tasks from in-memory state
-        tasks = await self.get_tasks_by_state(wallet_address)
+    async def get_tasks_by_ui_section(self, wallet_address: str) -> Dict[str, List[dict]]:
+        """Group tasks by their UI section (status)"""
+        # Get all tasks
+        all_tasks = await self.get_tasks_by_state(wallet_address)
         
-        # Track removed tasks since last update if we're doing a delta update
-        removed_task_ids = []
-        if since is not None:
-            # Get the set of task IDs we knew about at the last update
-            last_known_ids = set(self._task_update_timestamps.get(wallet_address, {}).keys())
-            # Get the set of current task IDs
-            current_ids = {t["id"] for t in tasks}
-            # Find IDs that were in the last update but not in the current one
-            removed_task_ids = list(last_known_ids - current_ids)
-        
-        # Initialize sections for each possible TaskStatus
+        # Group by status
         sections = {s.name.lower(): [] for s in TaskStatus}
         
-        # Track which tasks have been updated since the given timestamp
-        updated_sections = {s.name.lower(): [] for s in TaskStatus}
-        any_updates = False
-        
-        for t in tasks:
-            sections[t["status"]].append(t)
+        for task in all_tasks:
+            sections[task["status"]].append(task)
             
-            # If we're doing a delta update, check if this task was updated
-            if since is not None:
-                task_id = t["id"]
-                task_ts = self._task_update_timestamps.get(wallet_address, {}).get(task_id, 0)
-                if task_ts > since:
-                    updated_sections[t["status"]].append(t)
-                    any_updates = True
-        
-        # Update all task timestamps
-        current_time = time.time()
-        if wallet_address not in self._task_update_timestamps:
-            self._task_update_timestamps[wallet_address] = {}
-        
-        for t in tasks:
-            self._task_update_timestamps[wallet_address][t["id"]] = current_time
-        
-        # If doing a delta update, only return sections with updates
-        result = sections
-        if since is not None:
-            result = updated_sections
-            # Include the list of removed task IDs
-            if removed_task_ids:
-                result["removed_task_ids"] = removed_task_ids
-                any_updates = True
-            
-            # If nothing has changed, return an empty result
-            if not any_updates:
-                return {}
-        
-        # Cache the full result (not the delta)
-        cache_key = f"{wallet_address}_{since}" if since else wallet_address
-        
-        # Make sure _cache dictionary exists before using it
-        if not hasattr(self, "_cache"):
-            self._cache = {"all_tasks": {}}
-            self._cache_timestamps = {"all_tasks": {}}
-        
-        self._cache["all_tasks"][cache_key] = sections
-        self._cache_timestamps["all_tasks"][cache_key] = current_time
-        
-        return result
-
-    def clear_user_state(self, wallet_address: str):
-        """
-        Remove all data for a user when they log out
-        """
-        logger.info(f"Clearing state for account: {wallet_address}")
-        
-        # Stop refresh loop if running
-        self.stop_refresh_loop(wallet_address)
-        
-        # Remove all data for this user
-        if wallet_address in self._clients:
-            del self._clients[wallet_address]
-        
-        if wallet_address in self._user_states:
-            del self._user_states[wallet_address]
-        
-        if wallet_address in self._last_processed_ledger:
-            del self._last_processed_ledger[wallet_address]
-        
-        if wallet_address in self._refresh_tasks:
-            del self._refresh_tasks[wallet_address]
-        
-        if wallet_address in self._task_update_timestamps:
-            del self._task_update_timestamps[wallet_address]
-        
-        logger.info(f"State cleared for account: {wallet_address}")
+        return sections
 
     async def get_user_payments(
         self,
@@ -447,36 +349,31 @@ class TaskStorage:
         start_ledger: Optional[int] = None,
         end_ledger: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Fetch all user Payment-type transactions for the given wallet_address,
-        excluding those with the node address (TASK_NODE_ADDRESS). This uses
-        the postfiat-sdk's CachingRpcClient to retrieve the transactions directly
-        from the XRPL (with caching).
-        """
+        """Get payment transactions for a user"""
         if start_ledger is None:
             start_ledger = EARLIEST_LEDGER_SEQ
         if end_ledger is None:
             end_ledger = -1
-
-        logger.info(f"Fetching user payments for {wallet_address} from {start_ledger} to {end_ledger}")
+            
+        # Mark as accessed
+        self._last_access_time[wallet_address] = datetime.now()
+        
+        logger.debug(f"Fetching payments for {wallet_address} from {start_ledger} to {end_ledger}")
         payments = []
-
-        async for txn in self._get_client(wallet_address).get_account_txns(wallet_address, start_ledger, end_ledger):
+        
+        async for txn in self.client.get_account_txns(wallet_address, start_ledger, end_ledger):
             # Only consider Payment transactions
             tx_type = txn.data.get("tx_json", {}).get("TransactionType")
             if tx_type != "Payment":
                 continue
-
-            # Exclude transactions involving the node address
+                
+            # Exclude node transactions
             if txn.from_address == TASK_NODE_ADDRESS or txn.to_address == TASK_NODE_ADDRESS:
                 continue
-
-            # Build a simple dictionary describing the transaction
-            # Note: txn.amount_pft is automatically populated for PFT transfers.
-            # For XRP, delivered_amount in the metadata may be a string in drops.
-            # If it's a dictionary, it often indicates an issued currency (PFT).
+                
+            # Process delivered amount
             raw_delivered = txn.data.get("meta", {}).get("delivered_amount", 0)
-
+            
             if isinstance(raw_delivered, dict):
                 # Already accounted for in txn.amount_pft for PFT
                 xrp_amount = 0
@@ -486,7 +383,7 @@ class TaskStorage:
                     xrp_amount = float(raw_delivered) / 1_000_000
                 except (ValueError, TypeError):
                     xrp_amount = 0
-
+                    
             payments.append({
                 "ledger_index": txn.ledger_index,
                 "timestamp": txn.timestamp.isoformat() if txn.timestamp else None,
@@ -497,66 +394,59 @@ class TaskStorage:
                 "amount_pft": float(txn.amount_pft),
                 "memo_data": txn.memo_data,
             })
-
+            
         return payments
 
     async def get_account_status(self, wallet_address: str) -> Dict[str, Any]:
-        """
-        Get account status information including initiation rite status,
-        context document link, and blacklist status.
-        """
+        """Get account status information"""
         logger.debug(f"Fetching account status for {wallet_address}")
         
-        if not self._get_state(wallet_address):
+        # Mark as accessed
+        self._last_access_time[wallet_address] = datetime.now()
+        
+        state = self._get_state(wallet_address)
+        if not state.node_account:
             return {
                 "init_rite_status": "UNSTARTED",
                 "context_doc_link": None,
                 "is_blacklisted": False,
                 "init_rite_statement": None
             }
-        
+            
         return {
-            "init_rite_status": self._get_state(wallet_address).node_account.init_rite_status.name,
-            "context_doc_link": self._get_state(wallet_address).node_account.context_doc_link,
-            "is_blacklisted": self._get_state(wallet_address).node_account.is_blacklisted,
-            "init_rite_statement": self._get_state(wallet_address).node_account.init_rite_statement
+            "init_rite_status": state.node_account.init_rite_status.name,
+            "context_doc_link": state.node_account.context_doc_link,
+            "is_blacklisted": state.node_account.is_blacklisted,
+            "init_rite_statement": state.node_account.init_rite_statement
         }
 
     async def get_user_node_messages(self, user_account: str, node_account: str, user_wallet: Wallet = None):
-        """
-        Get all messages between a user and a specific node
-        
-        Args:
-            user_account: User account address
-            node_account: Node account address
-            user_wallet: Optional wallet instance for decrypting messages
-            
-        Returns:
-            List of messages between the user and node
-        """
+        """Get messages between a user and a node"""
         logger.debug(f"Getting messages between {user_account} and {node_account}")
         
-        # Make sure we have the latest transactions by initializing with the wallet for decryption
-        if user_wallet:
-            await self.initialize_user_tasks(user_account, user_wallet)
-        else:
-            await self.initialize_user_tasks(user_account)
+        # Mark as accessed
+        self._last_access_time[user_account] = datetime.now()
         
+        # Initialize if needed
+        if user_account not in self._user_states:
+            if user_wallet:
+                await self.initialize_user_tasks(user_account, user_wallet)
+            else:
+                await self.initialize_user_tasks(user_account)
+                
         messages = []
         
-        # Get the transaction stream once
-        txn_stream = self._get_client(user_account).get_account_txns(
+        # Get transaction stream
+        txn_stream = self.client.get_account_txns(
             user_account,
             EARLIEST_LEDGER_SEQ,
             -1
         )
         
         try:
-            # Use the proper decoder based on the node account
+            # Use appropriate decoder based on node type
             if node_account == REMEMBRANCER_ADDRESS:
-                # Use the remembrancer decoder with the wallet for decryption
                 async for msg in decode_remembrancer_stream(txn_stream, node_account=node_account, user_account=user_wallet):
-                    # Format the message for the frontend
                     is_from_user = msg.direction == Direction.USER_TO_NODE
                     
                     messages.append({
@@ -567,7 +457,6 @@ class TaskStorage:
                         "amount_pft": msg.amount_pft if hasattr(msg, 'amount_pft') else 0
                     })
             else:
-                # For other node types, use the task decoder
                 async for msg in decode_task_stream(txn_stream, node_account=node_account, user_account=user_wallet):
                     is_from_user = msg.direction == Direction.USER_TO_NODE
                     
@@ -580,220 +469,15 @@ class TaskStorage:
                     })
         except Exception as e:
             logger.error(f"Error processing messages: {str(e)}", exc_info=True)
-        
+            
         # Sort by timestamp
         messages.sort(key=lambda x: x["timestamp"])
         
         return messages
-    
+        
     def is_initialized(self, wallet_address: str) -> bool:
-        """Check if a wallet address has been initialized"""
+        """Check if a user is initialized"""
         return (
-            hasattr(self, "_get_state") and 
-            self._get_state(wallet_address) and 
+            wallet_address in self._user_states and
             wallet_address in self._last_processed_ledger
         )
-    
-    async def initialize_recent_tasks(self, wallet_address: str, since_timestamp: int, user_wallet: Optional[Wallet] = None) -> None:
-        """
-        Initialize only recent tasks for a user based on a timestamp
-        This is more efficient for UI refreshes that only need recent data
-        """
-        logger.info(f"Initializing recent tasks for {wallet_address} since {since_timestamp}")
-        
-        # Ensure user is initialized
-        await self.initialize_user(wallet_address)
-        
-        # Convert timestamp to an approximate ledger index
-        # This is an estimation - 3.5 seconds per ledger on average
-        seconds_since = int(time.time()) - since_timestamp
-        ledgers_since = max(1, int(seconds_since / 3.5))
-        
-        try:
-            # Use get_account_txns without the limit parameter
-            current_ledger = -1  # Default to latest ledger
-            txn_info_stream = self._get_client(wallet_address).get_account_txns(
-                wallet_address, -1, -1  # Remove limit parameter
-            )
-            
-            # Try to extract current ledger from the first transaction
-            async for txn in txn_info_stream:
-                if hasattr(txn, 'ledger_index') and txn.ledger_index:
-                    current_ledger = txn.ledger_index
-                    break
-            
-            if current_ledger == -1:
-                # If we couldn't determine current ledger, use a reasonable default from last known
-                last_known = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
-                current_ledger = last_known + 24000  # ~24 hours of ledgers
-                logger.info(f"Could not determine current ledger for {wallet_address}, using estimate: {current_ledger}")
-        except Exception as e:
-            logger.warning(f"Error getting account info for {wallet_address}: {str(e)}")
-            # Use last known ledger + estimation
-            last_known = self._last_processed_ledger.get(wallet_address, EARLIEST_LEDGER_SEQ)
-            current_ledger = last_known + ledgers_since
-        
-        # Calculate start ledger (don't go too far back)
-        start_ledger = max(EARLIEST_LEDGER_SEQ, current_ledger - ledgers_since)
-        
-        # Get transaction stream and decode
-        txn_stream = self._get_client(wallet_address).get_account_txns(
-            wallet_address, 
-            start_ledger, 
-            current_ledger
-        )
-        
-        # Process the transactions
-        await self._decode_and_store_transactions(wallet_address, txn_stream, user_wallet)
-        
-        # Update the last processed ledger
-        self._last_processed_ledger[wallet_address] = current_ledger
-        
-        logger.info(f"Initialized recent tasks for {wallet_address}, processed ledgers {start_ledger} to {current_ledger}")
-
-    def _cache_result(self, cache_type, key, data):
-        """Store result in cache with expiry time"""
-        current_time = time.time()
-        
-        # Initialize cache dictionaries if they don't exist
-        if not hasattr(self, "_cache"):
-            self._cache = {}
-        if not hasattr(self, "_cache_expiry"):
-            self._cache_expiry = {}
-        
-        # Create the cache type section if it doesn't exist
-        if cache_type not in self._cache:
-            self._cache[cache_type] = {}
-            self._cache_expiry[cache_type] = {}
-        
-        # Store the data and set expiry (30 minutes)
-        self._cache[cache_type][key] = data
-        self._cache_expiry[cache_type][key] = current_time + 1800  # 30 minutes
-        
-        # Cleanup old cache entries (every 100 operations)
-        if random.random() < 0.01:  # 1% chance to run cleanup
-            self._cleanup_cache()
-
-    def _cleanup_cache(self):
-        """Remove expired cache entries"""
-        current_time = time.time()
-        
-        for cache_type in self._cache_expiry:
-            expired_keys = []
-            for key, expiry in self._cache_expiry[cache_type].items():
-                if expiry < current_time:
-                    expired_keys.append(key)
-            
-            # Remove expired entries
-            for key in expired_keys:
-                if key in self._cache[cache_type]:
-                    del self._cache[cache_type][key]
-                if key in self._cache_expiry[cache_type]:
-                    del self._cache_expiry[cache_type][key]
-
-    async def _decode_and_store_transactions(self, wallet_address: str, txn_stream, user_wallet: Optional[Wallet] = None):
-        """
-        Process and decode transaction stream, store results in user state.
-        
-        Args:
-            wallet_address: The account address 
-            txn_stream: Stream of transactions to process
-            user_wallet: Optional wallet for message decryption
-        """
-        # Get user state
-        user_state = self._get_state(wallet_address)
-        if not user_state:
-            logger.error(f"No user state found for {wallet_address}")
-            return
-        
-        # Process each transaction
-        transaction_count = 0
-        task_count = 0
-        
-        try:
-            # First attempt task node decoding
-            task_stream = decode_task_stream(txn_stream, node_account=TASK_NODE_ADDRESS, 
-                                           user_account=user_wallet)
-            
-            async for update in task_stream:
-                transaction_count += 1
-                
-                # Update user state with this transaction
-                if hasattr(user_state, "apply_message"):
-                    user_state.apply_message(update)
-                    task_count += 1
-                
-            # Reset stream for remembrancer processing
-            txn_stream = self._get_client(wallet_address).get_account_txns(
-                wallet_address, 
-                EARLIEST_LEDGER_SEQ, 
-                -1
-            )
-            
-            # Next attempt remembrancer decoding
-            remembrancer_stream = decode_remembrancer_stream(txn_stream, node_account=REMEMBRANCER_ADDRESS,
-                                                          user_account=user_wallet)
-            
-            async for update in remembrancer_stream:
-                transaction_count += 1
-                
-                # Update user state with this transaction
-                if hasattr(user_state, "apply_message"):
-                    user_state.apply_message(update)
-                    task_count += 1
-                
-        except Exception as e:
-            logger.error(f"Error decoding transactions for {wallet_address}: {str(e)}", exc_info=True)
-        
-        logger.info(f"Processed {transaction_count} transactions for {wallet_address}, updated {task_count} tasks")
-
-    async def _process_new_transactions(self, wallet_address: str, last_ledger: int, txn_stream = None) -> bool:
-        """
-        Process new transactions for a wallet address since the last processed ledger.
-        Returns True if new transactions were found, False otherwise.
-        """
-        # Get client for this wallet
-        client = self._get_client(wallet_address)
-        if not client:
-            logger.error(f"No client found for {wallet_address}")
-            return False
-        
-        # Get the latest ledger
-        current_ledger = -1
-        
-        # Only query transactions if ledger has advanced
-        if last_ledger < EARLIEST_LEDGER_SEQ:
-            last_ledger = EARLIEST_LEDGER_SEQ
-        
-        try:
-            # Get transaction stream from last known ledger to current
-            if txn_stream is None:
-                txn_stream = client.get_account_txns(wallet_address, last_ledger, -1)
-            
-            # Check if we have any new transactions by trying to grab one
-            has_transactions = False
-            
-            # Copy the stream for testing
-            test_stream = client.get_account_txns(wallet_address, last_ledger, -1)
-            async for txn in test_stream:
-                has_transactions = True
-                current_ledger = max(current_ledger, txn.ledger_index if hasattr(txn, 'ledger_index') else -1)
-                break
-            
-            if not has_transactions:
-                # No new transactions since last check
-                return False
-            
-            # Process the transactions with the full stream
-            await self._decode_and_store_transactions(wallet_address, txn_stream)
-            
-            # Update the last processed ledger if we found a higher one
-            if current_ledger > last_ledger:
-                self._last_processed_ledger[wallet_address] = current_ledger
-                return True
-            
-        except Exception as e:
-            logger.error(f"Error processing new transactions for {wallet_address}: {str(e)}", exc_info=True)
-        
-        return False
-

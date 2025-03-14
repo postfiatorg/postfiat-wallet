@@ -296,22 +296,11 @@ async def initialize_tasks(account: str, request: Request):
         # Check for fast initialization flag
         fast_init = body.get("fast_init", True)
         
-        if fast_init:
-            # Start with only recent data for faster loading (last 24 hours)
-            one_day_ago = int(time.time()) - (24 * 60 * 60)
-            await task_storage.initialize_recent_tasks(account, one_day_ago)
-            
-            # Start refresh loop with longer initial delay
-            await task_storage.start_refresh_loop(account)
-            
-            # Full initialization will happen in background via refresh loop
-            return {"status": "success", "mode": "fast"}
-        else:
-            # Fallback to full initialization if specifically requested
-            await task_storage.initialize_user_tasks(account)
-            await task_storage.start_refresh_loop(account)
-            return {"status": "success", "mode": "full"}
-            
+        # Initialize tasks based on requested mode
+        await task_storage.initialize_user_tasks(account)
+        await task_storage.start_refresh_loop(account)
+        
+        return {"status": "success", "mode": "full"}
     except Exception as e:
         logger.error(f"Error initializing tasks for {account}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -346,27 +335,22 @@ async def stop_task_refresh(account: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tasks/{account}")
-async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None, since: Optional[int] = None):
+async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None):
     """
     Get all tasks for an account, optionally filtered by status.
-    If 'since' timestamp is provided, only return tasks that have been updated since that time.
     """
-    logger.debug(f"Received tasks request for account: {account}, status filter: {status}, since: {since}")
+    logger.debug(f"Received tasks request for account: {account}, status filter: {status}")
     try:
         # First ensure tasks are initialized
-        if not task_storage._state.node_account or not task_storage.is_initialized(account):
+        if not task_storage.is_initialized(account):
             logger.debug(f"Account {account} not initialized, initializing now...")
-            # Use partial initialization if 'since' is recent
-            if since and time.time() - since < 3600:  # If asking for updates in the last hour
-                await task_storage.initialize_recent_tasks(account, since)
-            else:
-                await task_storage.initialize_user_tasks(account)
+            await task_storage.initialize_user_tasks(account)
         
         # Convert API enum to internal enum if status is provided
         internal_status = TaskStatus[status.name] if status else None
         
         if status:
-            tasks = await task_storage.get_tasks_by_state(account, internal_status, since)
+            tasks = await task_storage.get_tasks_by_state(account, internal_status)
             
             # Log task structure for the first task to help debug
             if tasks and len(tasks) > 0:
@@ -380,12 +364,11 @@ async def get_tasks(account: str, status: Optional[TaskStatusAPI] = None, since:
             
             return tasks
         else:
-            # Get tasks by UI section, with delta updates if 'since' is provided
-            sections = await task_storage.get_tasks_by_ui_section(account, since)
+            sections = await task_storage.get_tasks_by_ui_section(account)
             
             # Log a sample task from each section if available
             for section, section_tasks in sections.items():
-                if section != 'removed_task_ids' and section_tasks and len(section_tasks) > 0:
+                if section_tasks and len(section_tasks) > 0:
                     logger.debug(f"Section '{section}' has {len(section_tasks)} tasks")
                     if section == 'requested' or section == 'completed':  # Just log a couple sections
                         sample = {k: "..." for k in section_tasks[0].keys()}
@@ -1265,17 +1248,17 @@ async def reset_server_state():
         
         # 2. Clear all data structures
         logger.info("Clearing all server-side state")
-        task_storage._clients = {}
         task_storage._user_states = {}
         task_storage._refresh_tasks = {}
         task_storage._last_processed_ledger = {}
         task_storage._task_update_timestamps = {}
+        task_storage._last_access_time = {}
         
-        # 3. Clear caches
-        if hasattr(task_storage, "_cache"):
-            task_storage._cache = {}
-        if hasattr(task_storage, "_cache_expiry"):
-            task_storage._cache_expiry = {}
+        # 3. Clear cache in the client
+        if hasattr(task_storage.client, "_cache"):
+            task_storage.client._cache = {}
+        if hasattr(task_storage.client, "_cache_expiry"):
+            task_storage.client._cache_expiry = {}
             
         # 4. Clear ODV services
         global odv_services
@@ -1311,17 +1294,17 @@ async def startup_event():
             task.cancel()
     
     # Reset all data structures
-    task_storage._clients = {}
     task_storage._user_states = {}
     task_storage._refresh_tasks = {}
     task_storage._last_processed_ledger = {}
     task_storage._task_update_timestamps = {}
+    task_storage._last_access_time = {}
     
-    # Clear caches
-    if hasattr(task_storage, "_cache"):
-        task_storage._cache = {}
-    if hasattr(task_storage, "_cache_expiry"):
-        task_storage._cache_expiry = {}
+    # Clear caches in the client
+    if hasattr(task_storage.client, "_cache"):
+        task_storage.client._cache = {}
+    if hasattr(task_storage.client, "_cache_expiry"):
+        task_storage.client._cache_expiry = {}
         
     # Clear ODV services
     global odv_services
@@ -1335,4 +1318,3 @@ async def options_handler():
     Handle OPTIONS requests for all routes (CORS preflight).
     """
     return {"detail": "OK"}
-
