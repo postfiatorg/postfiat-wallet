@@ -27,6 +27,12 @@ interface TasksResponse {
   [key: string]: any[];  // For any other categories
 }
 
+// Add this new type and state variable near the top of your component
+interface DismissedTask {
+  id: string;
+  status: string;
+}
+
 const ProposalsPage = () => {
   const { isAuthenticated, address, isCurrentAccount } = useAuthAccount();
   const { password } = useContext(AuthContext);
@@ -50,6 +56,7 @@ const ProposalsPage = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('all');
   const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState<number>(0);
+  const [dismissedTasks, setDismissedTasks] = useState<DismissedTask[]>([]);
 
   // Add this effect to clear tasks when address changes
   useEffect(() => {
@@ -70,7 +77,7 @@ const ProposalsPage = () => {
   }, [address]); // Only run when address changes
 
   // Fetch tasks from the API
-  const fetchTasks = async (forceFullRefresh = false) => {
+  const fetchTasks = async (forceFullRefresh = false, useCache = true) => {
     if (!address || !isAuthenticated || !isCurrentAccount(address)) {
       console.log("Not fetching tasks - inactive account or not authenticated");
       setLoading(false);
@@ -83,79 +90,79 @@ const ProposalsPage = () => {
       // Add artificial delay for better UX
       await new Promise(resolve => setTimeout(resolve, 1000)); // Minimum 1 second refresh
       
+      // CHANGE 1: Remove delta updates temporarily - simply call the endpoint directly
       let endpoint = `/tasks/${address}`;
       
-      // Add timestamp for delta updates if not forcing full refresh
-      if (!forceFullRefresh && lastRefreshTimestamp > 0) {
-        endpoint += `?since=${lastRefreshTimestamp}`;
-      }
+      // Debug info
+      console.log(`Fetching tasks from: ${endpoint}${useCache ? "" : " (no cache)"}`);
       
-      const data = await apiService.get<TasksResponse>(endpoint);
-      console.log("Received tasks data:", JSON.stringify(data, null, 2));
-      
-      // Record the current time as the last refresh timestamp
-      setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
-      
-      if (forceFullRefresh || !lastRefreshTimestamp) {
-        // Full refresh - replace all tasks
-        let tasksToDisplay = [
-          ...data.requested || [],
-          ...data.proposed || [],
-          ...data.accepted || [],
-          ...data.challenged || [],
-          ...(showRefused ? data.refused || [] : [])
-        ];
-
-        // Sort tasks by timestamp
-        const parseTimestamp = (id: string): number => {
-          const tsStr = id.split('__')[0];
-          const isoTimestamp = tsStr.replace('_', 'T') + ":00";
-          return new Date(isoTimestamp).getTime();
-        };
-
-        tasksToDisplay.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
-        setTasks(tasksToDisplay);
-      } else {
-        // Delta update - merge with existing tasks
-        setTasks(prevTasks => {
-          // Create a map of existing tasks by ID for easy lookup
-          const taskMap = new Map(prevTasks.map(task => [task.id, task]));
-          
-          // Process each category and update the map
-          ['requested', 'proposed', 'accepted', 'challenged', 'refused'].forEach(category => {
-            if (!data[category]) return;
-            
-            data[category].forEach((task: any) => {
-              // Add or update task
-              taskMap.set(task.id, task);
-            });
+      // CHANGE 2: Add better error handling with response details
+      try {
+        const data = await apiService.get<TasksResponse>(endpoint, useCache);
+        console.log("Received tasks data type:", typeof data);
+        console.log("Keys in response:", Object.keys(data || {}));
+        
+        // CHANGE 3: Handle different response formats
+        if (Array.isArray(data)) {
+          // Filter out tasks that are in the dismissedTasks list with the same status
+          const filteredTasks = data.filter(task => {
+            const dismissedEntry = dismissedTasks.find(dt => dt.id === task.id);
+            // If it's not in dismissedTasks, or if it's in there but with a different status, keep it
+            return !dismissedEntry || dismissedEntry.status !== task.status;
           });
           
-          // If the update includes task removals, process them
-          if (data.removed_task_ids) {
-            data.removed_task_ids.forEach((id: string) => {
-              taskMap.delete(id);
-            });
-          }
+          setTasks(filteredTasks);
+          console.log(`Loaded ${filteredTasks.length} tasks out of ${data.length} (filtered dismissed tasks)`);
+        } else if (data && typeof data === 'object') {
+          // Process all sections as before
+          console.log(`Received sections: ${Object.keys(data).join(', ')}`);
           
-          // Convert map back to array and sort
-          let updatedTasks = Array.from(taskMap.values());
+          let allTasks: any[] = [];
           
-          // Apply refused filter if needed
-          if (!showRefused) {
-            updatedTasks = updatedTasks.filter(task => task.status !== 'refused');
-          }
+          // Combine all tasks from all categories
+          ['requested', 'proposed', 'accepted', 'challenged', 'refused'].forEach(category => {
+            if (data[category] && Array.isArray(data[category])) {
+              allTasks = [...allTasks, ...data[category]];
+            }
+          });
           
           // Sort tasks by timestamp
           const parseTimestamp = (id: string): number => {
+            if (!id || !id.includes('__')) return 0;
             const tsStr = id.split('__')[0];
             const isoTimestamp = tsStr.replace('_', 'T') + ":00";
             return new Date(isoTimestamp).getTime();
           };
           
-          updatedTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
-          return updatedTasks;
-        });
+          allTasks.sort((a, b) => parseTimestamp(b.id) - parseTimestamp(a.id));
+          
+          // Apply refused filter if needed
+          if (!showRefused) {
+            allTasks = allTasks.filter(task => task.status !== 'refused');
+          }
+          
+          // Filter out tasks that are in the dismissedTasks list with the same status
+          const filteredTasks = allTasks.filter(task => {
+            const dismissedEntry = dismissedTasks.find(dt => dt.id === task.id);
+            // If it's not in dismissedTasks, or if it's in there but with a different status, keep it
+            return !dismissedEntry || dismissedEntry.status !== task.status;
+          });
+          
+          setTasks(filteredTasks);
+          console.log(`Loaded ${filteredTasks.length} tasks out of ${allTasks.length} (filtered dismissed tasks)`);
+        } else {
+          throw new Error("Received invalid data format from API");
+        }
+        
+        // Record the current time as the last refresh timestamp
+        setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+      } catch (fetchError: any) {
+        console.error("API Error details:", fetchError);
+        if (fetchError.response) {
+          console.error('Response data:', fetchError.response.data);
+          console.error('Response status:', fetchError.response.status);
+        }
+        throw fetchError;
       }
     } catch (error) {
       console.error("Error fetching tasks:", error);
@@ -322,13 +329,25 @@ const ProposalsPage = () => {
   // Task action handlers
   const handleAcceptTask = async (taskId: string, message: string) => {
     try {
-      // TODO: Implement accept task API call
+      const taskToRemove = tasks.find(task => task.id === taskId);
+      if (!taskToRemove) return;
+      
       console.log('Accepting task:', taskId, message);
       handleModalClose('accept');
-      await fetchTasks();
       
-      // Remove task from current list until refresh completes
+      // Add to dismissed tasks with current state
+      setDismissedTasks(prev => [...prev, {
+        id: taskId,
+        status: taskToRemove.status
+      }]);
+      
+      // Immediately remove task from the UI
       setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
+      
+      // Also remove from expanded tasks
+      const removedTaskIds = new Set(expandedTasks);
+      removedTaskIds.delete(taskId);
+      setExpandedTasks(removedTaskIds);
     } catch (error) {
       console.error('Error accepting task:', error);
     }
@@ -336,10 +355,11 @@ const ProposalsPage = () => {
 
   const handleRequestTask = async (message: string) => {
     try {
-      // TODO: Implement request task API call
       console.log('Requesting task:', message);
       handleModalClose('request');
-      await fetchTasks();
+      
+      // For request, we don't need to remove anything since
+      // we're creating a new task
     } catch (error) {
       console.error('Error requesting task:', error);
     }
@@ -347,13 +367,25 @@ const ProposalsPage = () => {
 
   const handleRefuseTask = async (taskId: string, reason: string) => {
     try {
-      // TODO: Implement refuse task API call
+      const taskToRemove = tasks.find(task => task.id === taskId);
+      if (!taskToRemove) return;
+      
       console.log('Refusing task:', taskId, reason);
       handleModalClose('refuse');
       
-      // Remove task from current list until refresh completes
+      // Add to dismissed tasks with current state
+      setDismissedTasks(prev => [...prev, {
+        id: taskId,
+        status: taskToRemove.status
+      }]);
+      
+      // Immediately remove task from the UI
       setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
-      await fetchTasks();
+      
+      // Also remove from expanded tasks
+      const removedTaskIds = new Set(expandedTasks);
+      removedTaskIds.delete(taskId);
+      setExpandedTasks(removedTaskIds);
     } catch (error) {
       console.error('Error refusing task:', error);
     }
@@ -361,13 +393,25 @@ const ProposalsPage = () => {
 
   const handleSubmitVerification = async (taskId: string, details: string) => {
     try {
-      // The actual submission is now handled in the modal
+      const taskToRemove = tasks.find(task => task.id === taskId);
+      if (!taskToRemove) return;
+      
       console.log('Verification submitted:', taskId, details);
       handleModalClose('verify');
       
-      // Remove task from current list until refresh completes
+      // Add to dismissed tasks with current state
+      setDismissedTasks(prev => [...prev, {
+        id: taskId,
+        status: taskToRemove.status
+      }]);
+      
+      // Immediately remove task from the UI
       setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
-      await fetchTasks(); // Refresh the task list
+      
+      // Also remove from expanded tasks
+      const removedTaskIds = new Set(expandedTasks);
+      removedTaskIds.delete(taskId);
+      setExpandedTasks(removedTaskIds);
     } catch (error) {
       console.error('Error handling verification submission:', error);
     }
@@ -375,12 +419,25 @@ const ProposalsPage = () => {
 
   const handleFinalVerification = async (taskId: string, details: string) => {
     try {
+      const taskToRemove = tasks.find(task => task.id === taskId);
+      if (!taskToRemove) return;
+      
       console.log('Final verification submitted:', taskId, details);
       handleModalClose('finalVerify');
       
-      // Remove task from current list until refresh completes
+      // Add to dismissed tasks with current state
+      setDismissedTasks(prev => [...prev, {
+        id: taskId,
+        status: taskToRemove.status
+      }]);
+      
+      // Immediately remove task from the UI
       setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
-      await fetchTasks();
+      
+      // Also remove from expanded tasks
+      const removedTaskIds = new Set(expandedTasks);
+      removedTaskIds.delete(taskId);
+      setExpandedTasks(removedTaskIds);
     } catch (error) {
       console.error('Error handling final verification:', error);
     }
@@ -390,7 +447,8 @@ const ProposalsPage = () => {
     try {
       console.log('Pomodoro logged:', details);
       handleModalClose('logPomodoro');
-      await fetchTasks();
+      
+      // Pomodoro doesn't change task state so we don't need to remove anything
     } catch (error) {
       console.error('Error logging pomodoro:', error);
     }
@@ -529,6 +587,21 @@ const ProposalsPage = () => {
         return null;
     }
   };
+
+  // Add cleanup logic for dismissed tasks - periodically clean up old entries
+  // to prevent the list from growing too large
+  useEffect(() => {
+    const ONE_HOUR = 60 * 60 * 1000; // 1 hour in milliseconds
+    
+    const cleanupInterval = setInterval(() => {
+      // Keep the last 100 dismissed tasks at most
+      if (dismissedTasks.length > 100) {
+        setDismissedTasks(prev => prev.slice(-100));
+      }
+    }, ONE_HOUR);
+    
+    return () => clearInterval(cleanupInterval);
+  }, [dismissedTasks.length]);
 
   if (loading) {
     return (

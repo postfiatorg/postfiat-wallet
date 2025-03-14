@@ -30,6 +30,15 @@ class ApiCache {
     this.cache.clear();
   }
   
+  // Add a new method to clear task-related cache entries
+  clearTaskRelatedCache() {
+    for (const key of this.cache.keys()) {
+      if (key.includes('/tasks/')) {
+        this.cache.delete(key);
+      }
+    }
+  }
+  
   get(key: string): any | null {
     const cachedItem = this.cache.get(key);
     if (!cachedItem) return null;
@@ -252,13 +261,21 @@ export class ApiService {
       
       const result = await response.json();
       
-      // Invalidate any related cache entries after successful POST
-      if (endpoint.includes('/account/') || endpoint.includes('/tasks/')) {
-        const addressMatch = endpoint.match(/\/account\/([^\/]+)\/|\/tasks\/([^\/]+)/);
-        if (addressMatch) {
-          const address = addressMatch[1] || addressMatch[2];
+      // Improved cache invalidation logic
+      // 1. Extract address from endpoint if possible
+      const addressMatch = endpoint.match(/\/account\/([^\/]+)\/|\/tasks\/([^\/]+)|\/transaction\/[^\/]+/);
+      if (addressMatch) {
+        const address = addressMatch[1] || addressMatch[2];
+        if (address) {
+          console.log(`Invalidating cache for address: ${address} after POST to ${endpoint}`);
           apiCache.clearAccountCache(address);
         }
+      }
+      
+      // 2. For any task-related endpoints, invalidate ALL task cache entries
+      if (endpoint.includes('/tasks/') || endpoint.includes('/transaction/')) {
+        console.log(`Invalidating all task-related cache entries after POST to ${endpoint}`);
+        apiCache.clearTaskRelatedCache(); // Using our new method
       }
       
       return result as T;
