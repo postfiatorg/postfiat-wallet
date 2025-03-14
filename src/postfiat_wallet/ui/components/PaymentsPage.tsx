@@ -58,59 +58,46 @@ const PaymentsPage = () => {
     
     setIsLoading(true);
     try {
-      // Build endpoint with optional since parameter for delta updates
+      // CHANGE 1: Remove delta updates temporarily
       let endpoint = `/payments/${address}`;
-      if (!forceFullRefresh && lastRefreshTimestamp > 0) {
-        endpoint += `?since=${lastRefreshTimestamp}`;
-      }
       
-      const data = await apiService.get<PaymentResponse>(endpoint);
+      // Debug info
+      console.log(`Fetching payments from: ${endpoint}`);
       
-      // Update timestamp for next refresh
-      setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
-      
-      if (forceFullRefresh || lastRefreshTimestamp === 0) {
-        // Initial load or forced refresh - replace all data
-        const sortedTransactions = data.payments.sort((a, b) => {
-          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        });
+      // CHANGE 2: Add better error handling
+      try {
+        const data = await apiService.get<PaymentResponse>(endpoint);
         
-        setTransactions(sortedTransactions);
-      } else {
-        // Delta update - merge with existing data
-        setTransactions(prevTransactions => {
-          // Create a map of existing transactions by hash for easy lookup
-          const txMap = new Map(prevTransactions.map(tx => [tx.hash, tx]));
-          
-          // Add or update new transactions
-          data.payments.forEach(payment => {
-            txMap.set(payment.hash, payment);
-          });
-          
-          // Handle removed payments if supported by the API
-          if (data.removed_payment_ids) {
-            data.removed_payment_ids.forEach(id => {
-              // Find and remove the payment with this id
-              for (const [hash, tx] of txMap.entries()) {
-                if (tx.id === id) {
-                  txMap.delete(hash);
-                  break;
-                }
-              }
-            });
-          }
-          
-          // Convert map back to array and sort
-          const updatedTransactions = Array.from(txMap.values());
-          updatedTransactions.sort((a, b) => {
+        console.log("Received payments data type:", typeof data);
+        console.log("Keys in response:", Object.keys(data || {}));
+        
+        // CHANGE 3: Handle response data more carefully
+        if (data && data.payments && Array.isArray(data.payments)) {
+          const sortedTransactions = data.payments.sort((a, b) => {
             return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
           });
           
-          return updatedTransactions;
-        });
+          setTransactions(sortedTransactions);
+          console.log(`Loaded ${sortedTransactions.length} payments`);
+        } else {
+          // Fallback for empty or unexpected response format
+          console.warn("Received unexpected data format from payments API:", data);
+          setTransactions([]);
+        }
+        
+        // Update timestamp for next refresh
+        setLastRefreshTimestamp(Math.floor(Date.now() / 1000));
+      } catch (fetchError: any) {
+        console.error("API Error details:", fetchError);
+        if (fetchError.response) {
+          console.error('Response data:', fetchError.response.data);
+          console.error('Response status:', fetchError.response.status);
+        }
+        throw fetchError;
       }
     } catch (error) {
       console.error('Error fetching payments:', error);
+      setError(error instanceof Error ? error.message : "Failed to fetch payments");
     } finally {
       setIsLoading(false);
     }
